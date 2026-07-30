@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth/auth-provider";
@@ -10,9 +11,11 @@ import {
   validateCaptureFile,
 } from "@/lib/api";
 import { captureErrorMessage } from "@/lib/capture";
+import {
+  type CaptureMode,
+  captureModeFromSearchParam,
+} from "@/lib/capture-mode";
 import { focusTrapTargetIndex } from "@/lib/focus-trap";
-
-type CaptureMode = "text" | "file";
 
 type CaptureState =
   | { status: "idle" }
@@ -34,11 +37,24 @@ type CaptureFormsProps = {
 };
 
 export function CaptureForms({ onCaptured }: CaptureFormsProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<CaptureMode | null>(null);
   const launchButtonRef = useRef<HTMLButtonElement>(null);
+  const requestedMode = captureModeFromSearchParam(searchParams.get("capture"));
+
+  useEffect(() => {
+    if (requestedMode) {
+      setMode(requestedMode);
+    }
+  }, [requestedMode]);
 
   function closeModal() {
     setMode(null);
+    if (requestedMode) {
+      router.replace(pathname, { scroll: false });
+    }
     requestAnimationFrame(() => launchButtonRef.current?.focus());
   }
 

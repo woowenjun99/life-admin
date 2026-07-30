@@ -139,7 +139,7 @@ export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
         <div className="workspace-nav-actions">
           <Link
             className="button button-small workspace-capture-link"
-            href="/inbox"
+            href="/today?capture=text"
           >
             Capture
           </Link>

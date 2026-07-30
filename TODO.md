@@ -144,8 +144,8 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [ ] Show the recommended next action.
   - [ ] Show plans waiting on someone or something.
   - [ ] Show recently completed steps.
-  - [ ] Add a prominent capture entry point.
-- [ ] Build `/inbox`.
+  - [x] Add a prominent capture entry point.
+- [x] Build Inbox capture on `/today`.
   - [x] Text capture form.
   - [x] File-upload control with validation feedback.
   - [x] Inbox list with processing status.

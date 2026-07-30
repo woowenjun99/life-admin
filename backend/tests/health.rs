@@ -6,8 +6,6 @@ mod auth;
 mod domain;
 #[path = "../src/inbox.rs"]
 mod inbox;
-#[path = "../src/scanner.rs"]
-mod scanner;
 #[path = "../src/storage.rs"]
 mod storage;
 
@@ -24,15 +22,6 @@ use firebase_admin::auth::AuthClient;
 use inbox::SqlxInboxRepository;
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
-
-struct HealthScanner;
-
-#[async_trait]
-impl scanner::FileScanner for HealthScanner {
-    async fn scan(&self, _content: &[u8]) -> anyhow::Result<scanner::ScanResult> {
-        Ok(scanner::ScanResult::Clean)
-    }
-}
 
 struct HealthObjectStore;
 
@@ -65,7 +54,6 @@ async fn health_endpoint_does_not_require_database_connectivity() {
         inbox_repository: Arc::new(SqlxInboxRepository::new(database.clone())),
         database,
         object_store: Arc::new(HealthObjectStore),
-        scanner: Arc::new(HealthScanner),
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
             Arc::new(firebase_auth),
             "demo-backend",

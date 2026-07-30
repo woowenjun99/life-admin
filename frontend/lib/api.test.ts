@@ -211,8 +211,8 @@ test("upload errors keep the server error code for capture state messaging", asy
     Response.json(
       {
         error: {
-          code: "FILE_SCAN_UNAVAILABLE",
-          message: "File scanning is temporarily unavailable.",
+          code: "STORAGE_UNAVAILABLE",
+          message: "Private file storage is temporarily unavailable.",
         },
       },
       { status: 503 },
@@ -226,7 +226,7 @@ test("upload errors keep the server error code for capture state messaging", asy
       ),
     ).rejects.toMatchObject({
       status: 503,
-      code: "FILE_SCAN_UNAVAILABLE",
+      code: "STORAGE_UNAVAILABLE",
     });
   } finally {
     globalThis.fetch = originalFetch;

@@ -10,10 +10,6 @@ export function captureErrorMessage(error: unknown): string {
       return "Check the capture and try again.";
     case "FILE_TOO_LARGE":
       return "Files must not exceed 10 MiB.";
-    case "UNSAFE_FILE":
-      return "That file could not be accepted.";
-    case "FILE_SCAN_UNAVAILABLE":
-      return "File scanning is temporarily unavailable. Please try again later.";
     case "STORAGE_UNAVAILABLE":
       return "Private file storage is temporarily unavailable. Please try again later.";
     default:

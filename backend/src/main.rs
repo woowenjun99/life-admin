@@ -5,7 +5,6 @@ mod db;
 mod domain;
 mod firebase;
 mod inbox;
-mod scanner;
 mod storage;
 
 use std::sync::Arc;
@@ -15,7 +14,6 @@ use app::{AppState, router};
 use auth::FirebaseTokenVerifier;
 use config::Config;
 use inbox::SqlxInboxRepository;
-use scanner::ClamdScanner;
 use storage::FirebaseStorage;
 
 #[tokio::main]
@@ -47,7 +45,6 @@ async fn main() -> Result<()> {
     let app = router(AppState {
         inbox_repository: Arc::new(SqlxInboxRepository::new(database.clone())),
         object_store,
-        scanner: Arc::new(ClamdScanner::new(config.clamav_address)),
         database,
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
             firebase_auth,

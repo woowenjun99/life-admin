@@ -21,7 +21,6 @@ use crate::{
     auth::{AuthenticatedUser, TokenVerifier},
     domain::{CaptureSourceType, InboxStatus},
     inbox::{FileCapture, InboxItem, InboxItemDetail, InboxRepository},
-    scanner::{FileScanner, ScanResult},
     storage::PrivateObjectStore,
 };
 
@@ -35,7 +34,6 @@ pub struct AppState {
     pub inbox_repository: Arc<dyn InboxRepository>,
     pub token_verifier: Arc<dyn TokenVerifier>,
     pub object_store: Arc<dyn PrivateObjectStore>,
-    pub scanner: Arc<dyn FileScanner>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -181,7 +179,7 @@ async fn get_inbox_item(
 
 async fn create_file_capture(State(state): State<AppState>, request: Request) -> Response {
     // Keep authentication ahead of multipart parsing so unauthenticated requests never cause a
-    // body read, scanner connection, or storage/database side effect.
+    // body read, storage, or database side effect.
     let Ok(user) = authenticated_user(request.headers(), state.token_verifier.as_ref()).await
     else {
         return unauthenticated_response();
@@ -233,12 +231,6 @@ async fn create_file_capture(State(state): State<AppState>, request: Request) ->
     else {
         return file_validation_error_response();
     };
-
-    match state.scanner.scan(content.as_ref()).await {
-        Ok(ScanResult::Clean) => {}
-        Ok(ScanResult::Unsafe) => return unsafe_file_response(),
-        Err(_) => return scanner_unavailable_response(),
-    }
 
     let object_key = Uuid::new_v4().to_string();
     if state
@@ -360,22 +352,6 @@ fn file_too_large_response() -> Response {
         StatusCode::PAYLOAD_TOO_LARGE,
         "FILE_TOO_LARGE",
         "Files must not exceed 10 MiB.",
-    )
-}
-
-fn unsafe_file_response() -> Response {
-    api_error_response(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "UNSAFE_FILE",
-        "The uploaded file could not be accepted.",
-    )
-}
-
-fn scanner_unavailable_response() -> Response {
-    api_error_response(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "FILE_SCAN_UNAVAILABLE",
-        "File scanning is temporarily unavailable. Please try again later.",
     )
 }
 
@@ -541,7 +517,6 @@ mod tests {
     use crate::{
         domain::{CaptureSourceType, InboxStatus},
         inbox::{FileCapture, InboxItem, InboxItemDetail, InboxRepository},
-        scanner::{FileScanner, ScanResult},
         storage::PrivateObjectStore,
     };
 
@@ -656,42 +631,6 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy)]
-    enum ScannerBehavior {
-        Clean,
-        Unsafe,
-        Unavailable,
-    }
-
-    struct TestScanner {
-        behavior: ScannerBehavior,
-        scanned: Mutex<Vec<usize>>,
-    }
-
-    impl Default for TestScanner {
-        fn default() -> Self {
-            Self {
-                behavior: ScannerBehavior::Clean,
-                scanned: Mutex::new(Vec::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl FileScanner for TestScanner {
-        async fn scan(&self, content: &[u8]) -> anyhow::Result<ScanResult> {
-            self.scanned
-                .lock()
-                .expect("test scanner lock should not be poisoned")
-                .push(content.len());
-            match self.behavior {
-                ScannerBehavior::Clean => Ok(ScanResult::Clean),
-                ScannerBehavior::Unsafe => Ok(ScanResult::Unsafe),
-                ScannerBehavior::Unavailable => anyhow::bail!("scanner unavailable"),
-            }
-        }
-    }
-
     #[derive(Default)]
     struct TestObjectStore {
         uploaded: Mutex<Vec<(String, String, usize)>>,
@@ -735,16 +674,11 @@ mod tests {
     }
 
     fn test_app_with(inbox_repository: Arc<dyn InboxRepository>) -> Router {
-        test_app_with_dependencies(
-            inbox_repository,
-            Arc::new(TestScanner::default()),
-            Arc::new(TestObjectStore::default()),
-        )
+        test_app_with_dependencies(inbox_repository, Arc::new(TestObjectStore::default()))
     }
 
     fn test_app_with_dependencies(
         inbox_repository: Arc<dyn InboxRepository>,
-        scanner: Arc<dyn FileScanner>,
         object_store: Arc<dyn PrivateObjectStore>,
     ) -> Router {
         let database = PgPoolOptions::new()
@@ -756,7 +690,6 @@ mod tests {
             database,
             inbox_repository,
             token_verifier: Arc::new(TestTokenVerifier),
-            scanner,
             object_store,
         })
     }
@@ -1354,29 +1287,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_capture_authenticates_before_reading_or_scanning_multipart_data() {
+    async fn file_capture_authenticates_before_reading_multipart_data() {
         let repository = Arc::new(TestInboxRepository::default());
-        let scanner = Arc::new(TestScanner::default());
         let object_store = Arc::new(TestObjectStore::default());
-        let response =
-            test_app_with_dependencies(repository.clone(), scanner.clone(), object_store.clone())
-                .oneshot(file_request(
-                    "note.pdf",
-                    "application/pdf",
-                    b"%PDF-1.7 private content",
-                    false,
-                ))
-                .await
-                .expect("router should respond");
+        let response = test_app_with_dependencies(repository.clone(), object_store.clone())
+            .oneshot(file_request(
+                "note.pdf",
+                "application/pdf",
+                b"%PDF-1.7 private content",
+                false,
+            ))
+            .await
+            .expect("router should respond");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert!(
-            scanner
-                .scanned
-                .lock()
-                .expect("test scanner lock should not be poisoned")
-                .is_empty()
-        );
         assert!(
             object_store
                 .uploaded
@@ -1413,21 +1337,16 @@ mod tests {
 
         for (filename, content_type, content, expected_source_type) in cases {
             let repository = Arc::new(TestInboxRepository::default());
-            let scanner = Arc::new(TestScanner::default());
             let object_store = Arc::new(TestObjectStore::default());
-            let response = test_app_with_dependencies(
-                repository.clone(),
-                scanner.clone(),
-                object_store.clone(),
-            )
-            .oneshot(with_valid_token(file_request(
-                filename,
-                content_type,
-                content,
-                false,
-            )))
-            .await
-            .expect("router should respond");
+            let response = test_app_with_dependencies(repository.clone(), object_store.clone())
+                .oneshot(with_valid_token(file_request(
+                    filename,
+                    content_type,
+                    content,
+                    false,
+                )))
+                .await
+                .expect("router should respond");
 
             assert_eq!(response.status(), StatusCode::CREATED);
             let response_body = response_json(response).await;
@@ -1483,28 +1402,16 @@ mod tests {
 
         for request in invalid_requests {
             let repository = Arc::new(TestInboxRepository::default());
-            let scanner = Arc::new(TestScanner::default());
             let object_store = Arc::new(TestObjectStore::default());
-            let response = test_app_with_dependencies(
-                repository.clone(),
-                scanner.clone(),
-                object_store.clone(),
-            )
-            .oneshot(request)
-            .await
-            .expect("router should respond");
+            let response = test_app_with_dependencies(repository.clone(), object_store.clone())
+                .oneshot(request)
+                .await
+                .expect("router should respond");
 
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
             assert_eq!(
                 response_json(response).await["error"]["code"],
                 "VALIDATION_ERROR"
-            );
-            assert!(
-                scanner
-                    .scanned
-                    .lock()
-                    .expect("test scanner lock should not be poisoned")
-                    .is_empty()
             );
             assert!(
                 object_store
@@ -1524,30 +1431,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_capture_accepts_exact_limit_and_rejects_oversize_before_scanning() {
+    async fn file_capture_accepts_exact_limit_and_rejects_oversize() {
         let mut exact_limit = b"%PDF-1.7\n".to_vec();
         exact_limit.resize(MAX_FILE_BYTES, b'a');
         let repository = Arc::new(TestInboxRepository::default());
-        let scanner = Arc::new(TestScanner::default());
         let object_store = Arc::new(TestObjectStore::default());
-        let response =
-            test_app_with_dependencies(repository.clone(), scanner.clone(), object_store.clone())
-                .oneshot(with_valid_token(file_request(
-                    "exact.pdf",
-                    "application/pdf",
-                    &exact_limit,
-                    false,
-                )))
-                .await
-                .expect("router should respond");
+        let response = test_app_with_dependencies(repository.clone(), object_store.clone())
+            .oneshot(with_valid_token(file_request(
+                "exact.pdf",
+                "application/pdf",
+                &exact_limit,
+                false,
+            )))
+            .await
+            .expect("router should respond");
         assert_eq!(response.status(), StatusCode::CREATED);
 
         let mut oversized = b"%PDF-1.7\n".to_vec();
         oversized.resize(MAX_FILE_BYTES + 1, b'a');
-        let scanner = Arc::new(TestScanner::default());
         let response = test_app_with_dependencies(
             Arc::new(TestInboxRepository::default()),
-            scanner.clone(),
             Arc::new(TestObjectStore::default()),
         )
         .oneshot(with_valid_token(file_request(
@@ -1563,59 +1466,6 @@ mod tests {
             response_json(response).await["error"]["code"],
             "FILE_TOO_LARGE"
         );
-        assert!(
-            scanner
-                .scanned
-                .lock()
-                .expect("test scanner lock should not be poisoned")
-                .is_empty()
-        );
-    }
-
-    #[tokio::test]
-    async fn file_capture_fails_closed_for_malware_and_scanner_outages() {
-        for behavior in [ScannerBehavior::Unsafe, ScannerBehavior::Unavailable] {
-            let repository = Arc::new(TestInboxRepository::default());
-            let scanner = Arc::new(TestScanner {
-                behavior,
-                scanned: Mutex::new(Vec::new()),
-            });
-            let object_store = Arc::new(TestObjectStore::default());
-            let response =
-                test_app_with_dependencies(repository.clone(), scanner, object_store.clone())
-                    .oneshot(with_valid_token(file_request(
-                        "letter.pdf",
-                        "application/pdf",
-                        b"%PDF-1.7 content",
-                        false,
-                    )))
-                    .await
-                    .expect("router should respond");
-
-            let expected = match behavior {
-                ScannerBehavior::Unsafe => (StatusCode::UNPROCESSABLE_ENTITY, "UNSAFE_FILE"),
-                ScannerBehavior::Unavailable => {
-                    (StatusCode::SERVICE_UNAVAILABLE, "FILE_SCAN_UNAVAILABLE")
-                }
-                ScannerBehavior::Clean => unreachable!("only failure modes are tested"),
-            };
-            assert_eq!(response.status(), expected.0);
-            assert_eq!(response_json(response).await["error"]["code"], expected.1);
-            assert!(
-                object_store
-                    .uploaded
-                    .lock()
-                    .expect("test object-store lock should not be poisoned")
-                    .is_empty()
-            );
-            assert!(
-                repository
-                    .files
-                    .lock()
-                    .expect("test repository lock should not be poisoned")
-                    .is_empty()
-            );
-        }
     }
 
     #[tokio::test]
@@ -1627,7 +1477,6 @@ mod tests {
         });
         let response = test_app_with_dependencies(
             Arc::new(TestInboxRepository::default()),
-            Arc::new(TestScanner::default()),
             storage_failure.clone(),
         )
         .oneshot(with_valid_token(file_request(
@@ -1650,7 +1499,6 @@ mod tests {
                 should_fail: true,
                 ..Default::default()
             }),
-            Arc::new(TestScanner::default()),
             object_store.clone(),
         )
         .oneshot(with_valid_token(file_request(

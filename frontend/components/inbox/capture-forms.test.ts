@@ -4,12 +4,12 @@ import { ApiError } from "@/lib/api";
 
 import { captureErrorMessage } from "@/lib/capture";
 
-test("captureErrorMessage keeps privacy-safe file failure messages actionable", () => {
+test("captureErrorMessage keeps private file-storage failure messages actionable", () => {
   expect(
     captureErrorMessage(
-      new ApiError(503, "internal detail", "FILE_SCAN_UNAVAILABLE"),
+      new ApiError(503, "internal detail", "STORAGE_UNAVAILABLE"),
     ),
-  ).toBe("File scanning is temporarily unavailable. Please try again later.");
+  ).toBe("Private file storage is temporarily unavailable. Please try again later.");
   expect(captureErrorMessage(new Error("network failed"))).toBe(
     "Something went wrong. Please try again.",
   );

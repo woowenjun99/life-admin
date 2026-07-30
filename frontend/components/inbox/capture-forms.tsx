@@ -64,7 +64,7 @@ export function CaptureForms({ onCaptured }: CaptureFormsProps) {
         <p className="workspace-empty-kicker">Start a private capture</p>
         <h2>Save the thing you want to remember.</h2>
         <p>
-          Capture a note or one supported file. Files are scanned before they
+          Capture a note or one supported file. Files are checked before they
           are stored.
         </p>
         <div className="capture-launcher-actions">
@@ -219,7 +219,7 @@ function CaptureModal({
       }
       setFileState({
         status: "success",
-        message: "Private file captured and scanned.",
+        message: "Private file captured.",
       });
       onCaptured?.(item);
     } catch (error) {
@@ -324,7 +324,7 @@ function CaptureModal({
             <div className="capture-form-heading">
               <h3>Save one file</h3>
               <p>
-                PDF, JPEG, or PNG only. Maximum 10 MiB; files are scanned first.
+                PDF, JPEG, or PNG only. Maximum 10 MiB.
               </p>
             </div>
             <label htmlFor="capture-file">Choose a file</label>
@@ -357,7 +357,7 @@ function CaptureModal({
                 disabled={fileIsSubmitting || Boolean(fileValidation)}
                 type="submit"
               >
-                {fileIsSubmitting ? "Scanning…" : "Capture private file"}
+                {fileIsSubmitting ? "Saving…" : "Capture private file"}
               </button>
             </div>
             <CaptureNotice state={fileState} />

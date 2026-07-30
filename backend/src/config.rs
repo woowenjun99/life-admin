@@ -10,7 +10,6 @@ pub struct Config {
     pub firebase_project_id: String,
     pub firebase_service_account_json: Option<String>,
     pub firebase_storage_bucket: String,
-    pub clamav_address: SocketAddr,
 }
 
 impl Config {
@@ -37,10 +36,6 @@ impl Config {
             firebase_project_id: required("FIREBASE_PROJECT_ID")?,
             firebase_service_account_json: optional("FIREBASE_SERVICE_ACCOUNT_JSON"),
             firebase_storage_bucket: required("FIREBASE_STORAGE_BUCKET")?,
-            clamav_address: env::var("CLAMAV_ADDRESS")
-                .unwrap_or_else(|_| "127.0.0.1:3310".to_owned())
-                .parse()
-                .context("CLAMAV_ADDRESS must be a socket address, such as 127.0.0.1:3310")?,
         })
     }
 }

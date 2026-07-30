@@ -43,17 +43,6 @@ require_available_port() {
   [[ -z "$pids" ]] || fail "Port $port is already in use by PID(s): $pids. Stop the conflicting service or configure a different port."
 }
 
-configured_port() {
-  local variable_name="$1"
-  local default_port="$2"
-  local port="${!variable_name:-$default_port}"
-
-  [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 1 && port <= 65535)) \
-    || fail "$variable_name must be an integer between 1 and 65535."
-
-  printf '%s' "$port"
-}
-
 release_project_service_port() {
   local service_name="$1"
   local service_label="$2"
@@ -71,10 +60,6 @@ release_project_service_port() {
 
 release_postgres_port() {
   release_project_service_port postgres PostgreSQL "$POSTGRES_PORT"
-}
-
-release_clamav_port() {
-  release_project_service_port clamav ClamAV "$1"
 }
 
 wait_for_port() {
@@ -95,25 +80,6 @@ wait_for_port() {
   done
 
   fail "$name did not open port $port within 30 seconds."
-}
-
-wait_for_clamav() {
-  local attempt
-
-  for attempt in {1..120}; do
-    if docker compose --project-directory "$ROOT_DIR" exec --no-TTY clamav \
-      sh -c "printf 'zPING\\0' | nc -w 1 127.0.0.1 3310 | tr -d '\\000' | grep -qx PONG" \
-      >/dev/null 2>&1; then
-      return
-    fi
-
-    if [[ -z "$(docker compose --project-directory "$ROOT_DIR" ps --status running --quiet clamav)" ]]; then
-      fail "ClamAV exited before answering zPING. Inspect it with: docker compose logs clamav"
-    fi
-    sleep 0.5
-  done
-
-  fail "ClamAV did not answer zPING within 60 seconds. Inspect it with: docker compose logs clamav"
 }
 
 firebase_project_id() {
@@ -158,12 +124,6 @@ CREATE SCHEMA public AUTHORIZATION app;
 SQL
 }
 
-start_clamav() {
-  echo "Starting ClamAV..."
-  docker compose --project-directory "$ROOT_DIR" up --detach clamav
-  wait_for_clamav
-}
-
 cleanup() {
   local exit_code=$?
   local pid
@@ -192,10 +152,6 @@ main() {
 
   local firebase_project
   firebase_project="$(firebase_project_id)"
-  local clamav_port
-  clamav_port="$(configured_port CLAMAV_HOST_PORT 3310)"
-  export CLAMAV_HOST_PORT="$clamav_port"
-
   trap cleanup EXIT INT TERM
 
   require_available_port "$FRONTEND_PORT"
@@ -204,10 +160,8 @@ main() {
   require_available_port "$FIREBASE_AUTH_PORT"
   require_available_port "$FIREBASE_STORAGE_PORT"
   release_postgres_port
-  release_clamav_port "$clamav_port"
 
   reset_database
-  start_clamav
 
   echo "Starting Firebase Auth and Storage Emulators..."
   (
@@ -224,7 +178,6 @@ main() {
   (
     cd "$BACKEND_DIR"
     exec env \
-      CLAMAV_ADDRESS="127.0.0.1:$clamav_port" \
       FIREBASE_AUTH_EMULATOR_HOST="127.0.0.1:$FIREBASE_AUTH_PORT" \
       FIREBASE_STORAGE_EMULATOR_HOST="127.0.0.1:$FIREBASE_STORAGE_PORT" \
       cargo run
@@ -244,7 +197,7 @@ main() {
   wait_for_port "Next.js frontend" "$FRONTEND_PORT" "$frontend_pid"
 
   echo "Local stack is ready: http://127.0.0.1:$FRONTEND_PORT"
-  echo "Press Ctrl-C to stop the Firebase emulators, backend, and frontend. PostgreSQL and the ClamAV signature volume remain running."
+  echo "Press Ctrl-C to stop the Firebase emulators, backend, and frontend. PostgreSQL remains running."
 
   while true; do
     local pid

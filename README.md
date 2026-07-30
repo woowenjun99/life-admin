@@ -66,9 +66,9 @@ interviews, competitive research, and usability testing are still needed.
 The current implementation provides the private Firebase-authenticated
 workspace, text capture, and one-file private capture backed by PostgreSQL
 metadata and Firebase Storage. Every supported upload is type/size checked and
-scanned before it is stored. AI-assisted extraction, reviewed plans, Inbox
-listing, and file reads/downloads are still planned; they are not represented
-as completed product capabilities here.
+stored privately. AI-assisted extraction, reviewed plans, Inbox listing, and
+file reads/downloads are still planned; they are not represented as completed
+product capabilities here.
 
 ## Technical overview
 
@@ -81,7 +81,7 @@ This repository contains two independent applications:
 
 - Rust (the project uses the Rust 2024 edition)
 - Bun 1.3 or later
-- Docker Desktop for the local PostgreSQL and ClamAV containers
+- Docker Desktop for the local PostgreSQL container
 - A Firebase project for browser configuration and Firebase Admin credentials
 
 ## Local development
@@ -107,18 +107,13 @@ Set `FIREBASE_STORAGE_BUCKET` in `backend/.env` as well as the Firebase Auth
 project value. For local emulation the bucket name is an identifier only; the
 launcher points the server at the Storage Emulator.
 
-The launcher starts PostgreSQL on `5432`, project-owned ClamAV on loopback port
-`3310` by default, Firebase Auth Emulator on `9099`, Firebase Storage Emulator on `9199`
-(with its UI on `4000`), Axum on `3001`, and Next.js on `3000`. It fails before
-starting if another process owns one of those ports, so it does not interrupt
-unrelated local services. PostgreSQL and ClamAV are first stopped only through
-this project's Compose services. The launcher stops only the Firebase,
-backend, and frontend child processes it creates when you press Ctrl-C; the
-ClamAV signature volume remains available for the next start.
-
-If port `3310` is in use, choose another loopback port with
-`CLAMAV_HOST_PORT=3330 ./scripts/start-local.sh`. The launcher passes the
-matching `CLAMAV_ADDRESS` to the local backend.
+The launcher starts PostgreSQL on `5432`, Firebase Auth Emulator on `9099`,
+Firebase Storage Emulator on `9199` (with its UI on `4000`), Axum on `3001`,
+and Next.js on `3000`. It fails before starting if another process owns one of
+those ports, so it does not interrupt unrelated local services. PostgreSQL is
+first stopped only through this project's Compose service. The launcher stops
+only the Firebase, backend, and frontend child processes it creates when you
+press Ctrl-C.
 
 **The local launcher resets the PostgreSQL `public` schema on every start. All
 local application tables and data are deleted.** Firebase Auth Emulator users
@@ -198,11 +193,10 @@ for emulator access.
 
 `POST /api/v1/inbox-items/files` accepts exactly one multipart field named
 `file`. It accepts one PDF, JPEG, or PNG of up to 10 MiB, verifies its declared
-MIME type against its magic bytes, rejects unsafe display filenames, scans it
-with ClamAV, and only then writes the object and its Inbox metadata. Object
-keys are generated server-side and are never returned to the browser. This
-increment has no file listing, preview, download, or direct browser Storage
-access.
+MIME type against its magic bytes, rejects unsafe display filenames, and then
+writes the object and its Inbox metadata. Object keys are generated server-side
+and are never returned to the browser. This increment has no file listing,
+preview, download, or direct browser Storage access.
 
 Set `FIREBASE_STORAGE_BUCKET` to the production bucket name. The service
 account must have bucket-level object create and delete permission, while the
@@ -215,13 +209,7 @@ For local work, the launcher sets
 supports the object insert/delete operations used by this capture path; see the
 [Firebase Storage Emulator documentation](https://firebase.google.com/docs/emulator-suite/connect_storage).
 
-The backend image bundles ClamAV. It refreshes signatures before starting
-`clamd`, keeps `clamd` bound to loopback, waits for its `zPING` health reply,
-then starts Axum as the non-root `app` user. Persist `/var/lib/clamav` in
-production so signature downloads survive restarts, budget memory for the
-signature database plus concurrent 10 MiB scans, and never expose the scanner
-port publicly. The scanner uses the framed `zINSTREAM` protocol described in
-the [ClamD protocol documentation](https://docs.clamav.net/manual/Usage/ClamdProtocol.html).
+The backend image starts Axum as the non-root `app` user.
 
 The web SDK accepts only `NEXT_PUBLIC_FIREBASE_*` configuration values. Do not
 put a service-account credential or another server secret in `frontend/.env.local`.
@@ -244,7 +232,6 @@ docker build --file backend/Dockerfile --tag full-stack-backend backend
 
 Provide `DATABASE_URL`, `FIREBASE_PROJECT_ID`, `FIREBASE_STORAGE_BUCKET`, and
 `FIREBASE_SERVICE_ACCOUNT_JSON` through the container platform's secret and
-environment configuration. Mount persistent storage at `/var/lib/clamav` and
-do not publish the scanner port. The image listens on port `3001`; keep it on a
+environment configuration. The image listens on port `3001`; keep it on a
 private network and set the frontend's `BACKEND_INTERNAL_URL` to its internal
 service URL.

@@ -1,14 +1,4 @@
 services:
-  clamav:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      target: scanner
-    ports:
-      - "127.0.0.1:${CLAMAV_HOST_PORT:-3310}:3310"
-    volumes:
-      - clamav_data:/var/lib/clamav
-
   postgres:
     image: postgres:17-alpine
     environment:
@@ -26,5 +16,4 @@ services:
       retries: 10
 
 volumes:
-  clamav_data:
   postgres_data:

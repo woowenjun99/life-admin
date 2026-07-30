@@ -5,6 +5,7 @@ mod db;
 mod domain;
 mod firebase;
 mod inbox;
+mod jwt;
 mod storage;
 
 use std::sync::Arc;
@@ -18,6 +19,8 @@ use storage::FirebaseStorage;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    jwt::install_default_provider()?;
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

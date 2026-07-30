@@ -4,8 +4,9 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Full-stack starter",
-  description: "Next.js frontend for the Axum API",
+  title: "Life Inbox — One clear next action",
+  description:
+    "A personal life-admin agent that turns life clutter into a calm, practical plan.",
 };
 
 export default function RootLayout({

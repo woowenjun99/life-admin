@@ -1,0 +1,21 @@
+# Rust
+backend/target/
+backend/.env
+backend/node_modules/
+backend/firebase-debug.log
+
+# Next.js / Bun
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+frontend/tsconfig.tsbuildinfo
+
+# Firebase Emulator logs
+firebase-debug.log
+ui-debug.log
+
+# Local PostgreSQL data
+postgres_data/
+
+# Editor and operating-system files
+.DS_Store

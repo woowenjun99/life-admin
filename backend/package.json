@@ -1,0 +1,11 @@
+{
+  "name": "backend-tooling",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "firebase:emulators": "firebase emulators:start --only auth --config ../firebase.json"
+  },
+  "devDependencies": {
+    "firebase-tools": "15.25.0"
+  }
+}

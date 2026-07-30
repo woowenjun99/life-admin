@@ -1,0 +1,40 @@
+#[path = "../src/app.rs"]
+mod app;
+
+use std::sync::Arc;
+
+use app::{AppState, router};
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
+use firebase_admin::auth::AuthClient;
+use sqlx::postgres::PgPoolOptions;
+use tower::ServiceExt;
+
+#[tokio::test]
+async fn health_endpoint_does_not_require_database_connectivity() {
+    let database = PgPoolOptions::new()
+        .connect_lazy("postgres://app:app@127.0.0.1:5432/app")
+        .expect("valid PostgreSQL URL");
+    let firebase_auth = AuthClient::builder("demo-backend")
+        .use_emulator("127.0.0.1:9099")
+        .build()
+        .expect("Firebase emulator client should initialize");
+    let app = router(AppState {
+        database,
+        firebase_auth: Arc::new(firebase_auth),
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .expect("valid request"),
+        )
+        .await
+        .expect("router should respond");
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}

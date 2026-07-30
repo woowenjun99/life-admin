@@ -3,7 +3,13 @@
 import { signOut } from "firebase/auth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 
 import { ApiError, type CurrentUser, fetchCurrentUser } from "@/lib/api";
 import { firebaseAuth } from "@/lib/firebase/client";
@@ -15,7 +21,22 @@ type WorkspaceState =
   | { status: "ready"; currentUser: CurrentUser }
   | { status: "error"; message: string };
 
-export function PrivateWorkspace() {
+const WorkspaceUserContext = createContext<CurrentUser | null>(null);
+
+export function useWorkspaceUser(): CurrentUser {
+  const user = useContext(WorkspaceUserContext);
+  if (!user) {
+    throw new Error("useWorkspaceUser must be used inside PrivateWorkspace.");
+  }
+
+  return user;
+}
+
+type PrivateWorkspaceProps = {
+  children: ReactNode;
+};
+
+export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
   const router = useRouter();
   const { isLoading, user } = useAuth();
   const [workspace, setWorkspace] = useState<WorkspaceState>({
@@ -115,38 +136,27 @@ export function PrivateWorkspace() {
           </span>
           <span>Life Inbox</span>
         </Link>
-        <button
-          className="button button-small button-ghost"
-          disabled={isSigningOut}
-          onClick={handleSignOut}
-          type="button"
-        >
-          {isSigningOut ? "Signing out…" : "Sign out"}
-        </button>
+        <div className="workspace-nav-actions">
+          <Link
+            className="button button-small workspace-capture-link"
+            href="/inbox"
+          >
+            Capture
+          </Link>
+          <button
+            className="button button-small button-ghost"
+            disabled={isSigningOut}
+            onClick={handleSignOut}
+            type="button"
+          >
+            {isSigningOut ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
       </nav>
 
-      <section className="workspace-panel">
-        <p className="eyebrow">Your private workspace</p>
-        <h1>Your Life Inbox is ready.</h1>
-        <p className="workspace-intro">
-          Signed in as <strong>{workspace.currentUser.email}</strong>. Your
-          captures and plans will stay connected to this account.
-        </p>
-
-        <div className="workspace-empty-state">
-          <span aria-hidden="true" className="workspace-empty-icon">
-            +
-          </span>
-          <div>
-            <p className="workspace-empty-kicker">Next up</p>
-            <h2>Capture the first thing on your mind.</h2>
-            <p>
-              Inbox capture is the next Life Inbox feature. For now, your
-              workspace is private and ready for it.
-            </p>
-          </div>
-        </div>
-      </section>
+      <WorkspaceUserContext value={workspace.currentUser}>
+        {children}
+      </WorkspaceUserContext>
     </main>
   );
 }

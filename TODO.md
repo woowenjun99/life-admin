@@ -15,7 +15,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 ### MVP boundaries
 
 - [x] Support one authenticated user's private life-admin workspace.
-- [ ] Capture text notes, with optional PDF/JPEG/PNG uploads.
+- [x] Capture text notes, with optional PDF/JPEG/PNG uploads.
 - [ ] Extract tasks, dates, people, important context, and missing details.
 - [ ] Require the user to review and edit suggestions before generating a plan.
 - [ ] Generate a concise plan with one next action and two to five ordered steps.
@@ -101,10 +101,10 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 
 - [x] Define shared request/response contracts before implementing routes.
 - [x] Add `POST /api/v1/inbox-items` for text capture.
-- [ ] Add a safe upload flow for PDF/JPEG/PNG captures.
-  - [ ] Enforce type and size limits.
-  - [ ] Store files outside publicly accessible paths.
-  - [ ] Reject unsafe filenames and invalid content types.
+- [x] Add a safe upload flow for PDF/JPEG/PNG captures.
+  - [x] Enforce type and size limits.
+  - [x] Store files outside publicly accessible paths.
+  - [x] Reject unsafe filenames and invalid content types.
 - [ ] Add `GET /api/v1/inbox-items` and `GET /api/v1/inbox-items/:id`.
 - [ ] Add `PATCH /api/v1/inbox-items/:id` for user-reviewed fields.
 - [ ] Add `POST /api/v1/inbox-items/:id/extract`.
@@ -146,8 +146,8 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [ ] Show recently completed steps.
   - [ ] Add a prominent capture entry point.
 - [ ] Build `/inbox`.
-  - [ ] Text capture form.
-  - [ ] File-upload control with validation feedback.
+  - [x] Text capture form.
+  - [x] File-upload control with validation feedback.
   - [ ] Inbox list with processing status.
   - [ ] Empty, loading, retry, and error states.
 - [ ] Build `/inbox/[id]/review`.

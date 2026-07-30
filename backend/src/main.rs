@@ -5,6 +5,8 @@ mod db;
 mod domain;
 mod firebase;
 mod inbox;
+mod scanner;
+mod storage;
 
 use std::sync::Arc;
 
@@ -13,6 +15,8 @@ use app::{AppState, router};
 use auth::FirebaseTokenVerifier;
 use config::Config;
 use inbox::SqlxInboxRepository;
+use scanner::ClamdScanner;
+use storage::FirebaseStorage;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -31,9 +35,19 @@ async fn main() -> Result<()> {
         config.firebase_service_account_json.as_deref(),
         auth_emulator_host.as_deref(),
     )?);
+    let object_store = Arc::new(
+        FirebaseStorage::from_environment(
+            config.firebase_storage_bucket.clone(),
+            config.firebase_service_account_json.as_deref(),
+        )
+        .await
+        .context("could not initialize Firebase Storage")?,
+    );
 
     let app = router(AppState {
         inbox_repository: Arc::new(SqlxInboxRepository::new(database.clone())),
+        object_store,
+        scanner: Arc::new(ClamdScanner::new(config.clamav_address)),
         database,
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
             firebase_auth,

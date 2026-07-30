@@ -675,6 +675,332 @@ footer p {
   font-size: 0.78rem;
 }
 
+.workspace-page {
+  min-height: 100svh;
+}
+
+.auth-modal-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background: rgb(24 60 54 / 52%);
+  backdrop-filter: blur(0.35rem);
+}
+
+.auth-modal {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 30rem);
+  max-height: calc(100svh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.auth-modal-backdrop-dismiss {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.auth-form-loading,
+.workspace-loading {
+  display: grid;
+  place-items: center;
+  color: #60746f;
+}
+
+.auth-form-loading {
+  min-height: 24rem;
+  border-radius: 1.25rem;
+  background: #fffdfa;
+}
+
+.auth-card {
+  padding: clamp(2rem, 6vw, 3.4rem);
+  border: 1px solid rgb(35 70 63 / 12%);
+  border-radius: 1.25rem;
+  background: rgb(255 253 250 / 88%);
+  box-shadow: 0 1.5rem 4rem rgb(25 64 56 / 13%);
+}
+
+.auth-copy {
+  margin-top: 3.9rem;
+}
+
+.auth-copy h1,
+.workspace-panel h1 {
+  max-width: 11ch;
+  color: #183c36;
+  font-size: clamp(2.85rem, 8vw, 4.4rem);
+  line-height: 0.95;
+}
+
+.auth-copy > p:not(.eyebrow) {
+  max-width: 31ch;
+  margin-top: 1rem;
+  color: #667a73;
+  font-size: 0.96rem;
+  line-height: 1.6;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 2rem;
+}
+
+.auth-form label {
+  margin-top: 0.7rem;
+  color: #38564f;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.auth-form input {
+  width: 100%;
+  min-height: 3.2rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid #c8d2c7;
+  border-radius: 0.65rem;
+  background: #fffefa;
+  color: #183c36;
+  font: inherit;
+}
+
+.auth-form input:focus {
+  border-color: #426e61;
+  outline: 2px solid transparent;
+  box-shadow: 0 0 0 3px rgb(66 110 97 / 16%);
+}
+
+.auth-form .button {
+  width: 100%;
+  margin-top: 1.25rem;
+  border: 0;
+  cursor: pointer;
+}
+
+.auth-form .button:disabled,
+.workspace-nav .button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+  transform: none;
+}
+
+.form-error {
+  margin-top: 0.6rem;
+  padding: 0.72rem 0.8rem;
+  border-radius: 0.6rem;
+  background: #fae6df;
+  color: #953f2d;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.auth-switch {
+  margin-top: 1.65rem;
+  color: #71847d;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.auth-switch a {
+  color: #315e53;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.18rem;
+}
+
+.auth-switch-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #315e53;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.18rem;
+}
+
+.auth-modal .auth-form-loading {
+  min-height: 20rem;
+}
+
+.auth-modal .auth-card {
+  padding: clamp(1.5rem, 4vw, 2rem);
+}
+
+.auth-modal .auth-copy {
+  margin-top: 1.75rem;
+}
+
+.auth-modal .auth-copy h1 {
+  max-width: 14ch;
+  font-size: clamp(2.4rem, 5vw, 3.35rem);
+}
+
+.auth-modal .auth-copy > p:not(.eyebrow) {
+  margin-top: 0.75rem;
+}
+
+.auth-modal .auth-form {
+  gap: 0.45rem;
+  margin-top: 1.35rem;
+}
+
+.auth-modal .auth-form label {
+  margin-top: 0.45rem;
+}
+
+.auth-modal .auth-form input {
+  min-height: 2.9rem;
+}
+
+.auth-modal .auth-form .button {
+  margin-top: 0.75rem;
+}
+
+.auth-modal .auth-switch {
+  margin-top: 1rem;
+}
+
+.auth-modal-close {
+  position: absolute;
+  z-index: 1;
+  top: 0.85rem;
+  right: 0.85rem;
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border: 1px solid #d6ddd3;
+  border-radius: 50%;
+  background: #fffdfa;
+  color: #315e53;
+  cursor: pointer;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-left: auto;
+}
+
+.nav-sign-in {
+  color: #315e53;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.workspace-page {
+  padding-inline: max(1.5rem, calc((100% - 75rem) / 2));
+  background:
+    radial-gradient(circle at 86% 4%, rgb(232 168 136 / 32%), transparent 24rem),
+    #f6f4ee;
+}
+
+.workspace-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 6.5rem;
+}
+
+.workspace-nav .button {
+  border: 1px solid #d8d8cd;
+  cursor: pointer;
+}
+
+.workspace-panel {
+  width: min(100%, 56rem);
+  padding-block: clamp(4rem, 12vw, 9rem);
+}
+
+.workspace-intro {
+  max-width: 42rem;
+  margin-top: 1.4rem;
+  color: #647870;
+  font-size: 1.06rem;
+  line-height: 1.65;
+}
+
+.workspace-intro strong {
+  color: #315e53;
+  font-weight: 700;
+}
+
+.workspace-empty-state {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1.1rem;
+  margin-top: 3.75rem;
+  padding: clamp(1.5rem, 4vw, 2.35rem);
+  border: 1px solid #d9ddd3;
+  border-radius: 1rem;
+  background: rgb(255 253 250 / 70%);
+}
+
+.workspace-empty-icon {
+  display: grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  place-items: center;
+  border-radius: 50%;
+  background: #d9e5d4;
+  color: #315e53;
+  font-size: 1.5rem;
+}
+
+.workspace-empty-kicker {
+  color: #7f928a;
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.workspace-empty-state h2 {
+  margin-top: 0.45rem;
+  color: #244b43;
+  font-size: clamp(1.65rem, 4vw, 2.3rem);
+  line-height: 1;
+}
+
+.workspace-empty-state p:last-child {
+  max-width: 39rem;
+  margin-top: 0.65rem;
+  color: #687b74;
+  font-size: 0.91rem;
+  line-height: 1.6;
+}
+
+.workspace-error {
+  width: min(100%, 30rem);
+  padding: 1.4rem;
+  border-radius: 0.9rem;
+  background: #fffdfa;
+  box-shadow: 0 1rem 2.5rem rgb(25 64 56 / 10%);
+}
+
+.workspace-error p {
+  color: #91412f;
+  line-height: 1.55;
+}
+
+.workspace-error .text-link {
+  display: inline-block;
+  margin-top: 1rem;
+}
+
 @media (max-width: 800px) {
   .site-nav,
   .hero,
@@ -691,10 +1017,6 @@ footer p {
 
   .nav-links {
     display: none;
-  }
-
-  .site-nav .button {
-    margin-left: auto;
   }
 
   .hero {
@@ -736,6 +1058,10 @@ footer p {
 
   .principles-section {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-nav {
+    min-height: 5.3rem;
   }
 }
 
@@ -817,5 +1143,17 @@ footer p {
 
   footer p {
     display: none;
+  }
+
+  .auth-modal-backdrop {
+    padding: 1rem;
+  }
+
+  .workspace-page {
+    padding-inline: 1rem;
+  }
+
+  .workspace-empty-state {
+    grid-template-columns: 1fr;
   }
 }

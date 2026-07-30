@@ -160,9 +160,12 @@ name = "backend"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
+ "base64",
  "dotenvy",
  "firebase-admin",
+ "serde",
  "serde_json",
  "sqlx",
  "tokio",

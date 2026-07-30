@@ -1,4 +1,5 @@
 mod app;
+mod auth;
 mod config;
 mod db;
 mod firebase;
@@ -7,6 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use app::{AppState, router};
+use auth::FirebaseTokenVerifier;
 use config::Config;
 
 #[tokio::main]
@@ -20,14 +22,20 @@ async fn main() -> Result<()> {
 
     let config = Config::from_env()?;
     let database = db::connect(&config.database_url, config.database_max_connections).await?;
+    let auth_emulator_host = firebase::auth_emulator_host();
     let firebase_auth = Arc::new(firebase::build_auth_client(
         &config.firebase_project_id,
         config.firebase_service_account_json.as_deref(),
+        auth_emulator_host.as_deref(),
     )?);
 
     let app = router(AppState {
         database,
-        firebase_auth,
+        token_verifier: Arc::new(FirebaseTokenVerifier::new(
+            firebase_auth,
+            config.firebase_project_id,
+            auth_emulator_host.is_some(),
+        )),
     });
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await

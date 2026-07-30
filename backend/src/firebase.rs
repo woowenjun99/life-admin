@@ -3,14 +3,21 @@ use std::env;
 use anyhow::{Context, Result, bail};
 use firebase_admin::{auth::AuthClient, core::ServiceAccountKey};
 
+pub fn auth_emulator_host() -> Option<String> {
+    env::var("FIREBASE_AUTH_EMULATOR_HOST")
+        .ok()
+        .filter(|host| !host.trim().is_empty())
+}
+
 pub fn build_auth_client(
     project_id: &str,
     service_account_json: Option<&str>,
+    auth_emulator_host: Option<&str>,
 ) -> Result<AuthClient> {
     let builder = AuthClient::builder(project_id);
-    match env::var("FIREBASE_AUTH_EMULATOR_HOST") {
-        Ok(host) if !host.trim().is_empty() => builder
-            .use_emulator(host)
+    match auth_emulator_host {
+        Some(host) => builder
+            .use_emulator(host.to_owned())
             .build()
             .context("could not initialize Firebase Admin Auth"),
         _ => build_live_auth_client(builder, project_id, service_account_json),

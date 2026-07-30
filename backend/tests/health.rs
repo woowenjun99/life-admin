@@ -1,9 +1,12 @@
 #[path = "../src/app.rs"]
 mod app;
+#[path = "../src/auth.rs"]
+mod auth;
 
 use std::sync::Arc;
 
 use app::{AppState, router};
+use auth::FirebaseTokenVerifier;
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -23,7 +26,11 @@ async fn health_endpoint_does_not_require_database_connectivity() {
         .expect("Firebase emulator client should initialize");
     let app = router(AppState {
         database,
-        firebase_auth: Arc::new(firebase_auth),
+        token_verifier: Arc::new(FirebaseTokenVerifier::new(
+            Arc::new(firebase_auth),
+            "demo-backend",
+            true,
+        )),
     });
 
     let response = app

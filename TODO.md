@@ -14,7 +14,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 
 ### MVP boundaries
 
-- [ ] Support one authenticated user's private life-admin workspace.
+- [x] Support one authenticated user's private life-admin workspace.
 - [ ] Capture text notes, with optional PDF/JPEG/PNG uploads.
 - [ ] Extract tasks, dates, people, important context, and missing details.
 - [ ] Require the user to review and edit suggestions before generating a plan.
@@ -42,6 +42,27 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [ ] Confirm local development still works through `./scripts/start-local.sh`.
 - [ ] Keep lint, type-check, unit tests, and production builds runnable in CI.
 - [ ] Document how CodeBuddy or WorkBuddy was used while building the project.
+
+## Next implementation — P0 Private Workspace
+
+- [x] Add email/password sign-up, sign-in, and sign-out with Firebase Auth.
+  - [x] Present sign-up and sign-in in an accessible landing-page modal; legacy
+        `/sign-up` and `/sign-in` URLs redirect to the matching modal.
+- [x] Add a shared client auth state that prevents protected UI rendering until
+      Firebase resolves the current account.
+- [x] Add protected `GET /api/v1/me` token verification behind the existing Next.js
+      proxy; keep `/health` and `/api/ready` public.
+- [x] Return the authenticated Firebase UID and email, without creating an
+      application user table.
+- [x] Build an empty private `/today` page that displays the authenticated email
+      and redirects signed-out visitors to `/sign-in`.
+- [x] Add deterministic backend verifier tests and frontend tests for auth error
+      messages and bearer-token construction.
+- [x] Complete the isolated Auth Emulator/API smoke: email/password sign-up and
+      sign-in → authenticated `/api/v1/me` → unauthenticated `/api/v1/me`
+      returns `401`.
+- [ ] Complete the browser emulator smoke: sign up → Today → reload preserves
+      session → sign out returns to the landing page.
 
 ## Landing page
 

@@ -61,7 +61,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [x] Complete the isolated Auth Emulator/API smoke: email/password sign-up and
       sign-in → authenticated `/api/v1/me` → unauthenticated `/api/v1/me`
       returns `401`.
-- [ ] Complete the browser emulator smoke: sign up → Today → reload preserves
+- [x] Complete the browser emulator smoke: sign up → Today → reload preserves
       session → sign out returns to the landing page.
 
 ## Landing page
@@ -78,29 +78,29 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 
 ## Data and persistence
 
-- [ ] Create a database migration for `inbox_items`.
-  - [ ] Owner Firebase UID.
-  - [ ] Capture source type: `text`, `image`, or `pdf`.
-  - [ ] Original text or file metadata.
-  - [ ] Status: `captured`, `reviewing`, `planned`, or `archived`.
-  - [ ] Created and updated timestamps.
-- [ ] Create a migration for reviewed extraction suggestions.
-  - [ ] Candidate tasks.
-  - [ ] Dates/deadlines.
-  - [ ] People or organisations.
-  - [ ] Important context and unanswered questions.
-- [ ] Create a migration for `plans` and ordered `plan_steps`.
-  - [ ] Plan summary and source inbox item.
-  - [ ] Highlighted next action.
-  - [ ] Status: `ready`, `waiting`, or `complete`.
-  - [ ] Step title, rationale, status, due date, and waiting-on detail.
+- [x] Create a database migration for `inbox_items`.
+  - [x] Owner Firebase UID.
+  - [x] Capture source type: `text`, `image`, or `pdf`.
+  - [x] Original text or file metadata.
+  - [x] Status: `captured`, `reviewing`, `planned`, or `archived`.
+  - [x] Created and updated timestamps.
+- [x] Create a migration for reviewed extraction suggestions.
+  - [x] Candidate tasks.
+  - [x] Dates/deadlines.
+  - [x] People or organisations.
+  - [x] Important context and unanswered questions.
+- [x] Create a migration for `plans` and ordered `plan_steps`.
+  - [x] Plan summary and source inbox item.
+  - [x] Highlighted next action.
+  - [x] Status: `ready`, `waiting`, or `complete`.
+  - [x] Step title, rationale, status, due date, and waiting-on detail.
 - [ ] Scope every read and write to the authenticated Firebase UID.
 - [ ] Add repository tests for ownership and plan-status transitions.
 
 ## Backend API
 
-- [ ] Define shared request/response contracts before implementing routes.
-- [ ] Add `POST /api/v1/inbox-items` for text capture.
+- [x] Define shared request/response contracts before implementing routes.
+- [x] Add `POST /api/v1/inbox-items` for text capture.
 - [ ] Add a safe upload flow for PDF/JPEG/PNG captures.
   - [ ] Enforce type and size limits.
   - [ ] Store files outside publicly accessible paths.

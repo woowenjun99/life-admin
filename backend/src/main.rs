@@ -2,7 +2,9 @@ mod app;
 mod auth;
 mod config;
 mod db;
+mod domain;
 mod firebase;
+mod inbox;
 
 use std::sync::Arc;
 
@@ -10,6 +12,7 @@ use anyhow::{Context, Result};
 use app::{AppState, router};
 use auth::FirebaseTokenVerifier;
 use config::Config;
+use inbox::SqlxInboxRepository;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -30,6 +33,7 @@ async fn main() -> Result<()> {
     )?);
 
     let app = router(AppState {
+        inbox_repository: Arc::new(SqlxInboxRepository::new(database.clone())),
         database,
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
             firebase_auth,

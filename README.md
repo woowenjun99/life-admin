@@ -48,6 +48,58 @@ Open a `psql` session with:
 docker compose exec postgres psql -U app -d app
 ```
 
+## Data schema manual smoke
+
+The backend applies its embedded SQLx migrations before it starts serving
+requests. After starting the local stack, verify the schema and migration
+history without exposing personal capture contents:
+
+```sh
+docker compose exec postgres psql -U app -d app -c '\dt'
+docker compose exec postgres psql -U app -d app -c 'SELECT version FROM _sqlx_migrations ORDER BY version'
+```
+
+With a Firebase Auth Emulator ID token, create a text capture through the
+same API the browser will use:
+
+```sh
+curl --request POST http://127.0.0.1:3001/api/v1/inbox-items \
+  --header "Authorization: Bearer $FIREBASE_ID_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"text":"Renew passport"}'
+```
+
+The response contains metadata only. Inspect only the safe metadata columns:
+
+```sh
+docker compose exec postgres psql -U app -d app -c \
+  'SELECT owner_uid, source_type, status, created_at, updated_at FROM inbox_items'
+```
+
+To confirm the status and source-content constraints, this block succeeds only
+when PostgreSQL rejects both invalid inserts:
+
+```sql
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO inbox_items (owner_uid, source_type, original_text, status)
+    VALUES ('manual-smoke-owner', 'text', 'invalid status', 'invalid');
+    RAISE EXCEPTION 'expected inbox_items status constraint';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+  BEGIN
+    INSERT INTO inbox_items (owner_uid, source_type, status)
+    VALUES ('manual-smoke-owner', 'text', 'captured');
+    RAISE EXCEPTION 'expected inbox_items source-content constraint';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END;
+$$;
+```
+
 ## Firebase credentials
 
 The Rust service initializes a Firebase Admin Auth client from the complete

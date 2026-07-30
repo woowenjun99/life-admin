@@ -2,6 +2,10 @@
 mod app;
 #[path = "../src/auth.rs"]
 mod auth;
+#[path = "../src/domain.rs"]
+mod domain;
+#[path = "../src/inbox.rs"]
+mod inbox;
 
 use std::sync::Arc;
 
@@ -12,6 +16,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use firebase_admin::auth::AuthClient;
+use inbox::SqlxInboxRepository;
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
@@ -25,6 +30,7 @@ async fn health_endpoint_does_not_require_database_connectivity() {
         .build()
         .expect("Firebase emulator client should initialize");
     let app = router(AppState {
+        inbox_repository: Arc::new(SqlxInboxRepository::new(database.clone())),
         database,
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
             Arc::new(firebase_auth),

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{
-        DefaultBodyLimit, FromRequest, Multipart, Request, State, multipart::MultipartError,
+        DefaultBodyLimit, FromRequest, Multipart, Path, Request, State, multipart::MultipartError,
         rejection::JsonRejection,
     },
     http::{HeaderMap, StatusCode, header},
@@ -20,7 +20,7 @@ use uuid::Uuid;
 use crate::{
     auth::{AuthenticatedUser, TokenVerifier},
     domain::{CaptureSourceType, InboxStatus},
-    inbox::{FileCapture, InboxItem, InboxRepository},
+    inbox::{FileCapture, InboxItem, InboxItemDetail, InboxRepository},
     scanner::{FileScanner, ScanResult},
     storage::PrivateObjectStore,
 };
@@ -43,7 +43,11 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/api/ready", get(readiness))
         .route("/api/v1/me", get(current_user))
-        .route("/api/v1/inbox-items", post(create_text_capture))
+        .route(
+            "/api/v1/inbox-items",
+            get(list_inbox_items).post(create_text_capture),
+        )
+        .route("/api/v1/inbox-items/{item_id}", get(get_inbox_item))
         .route(
             "/api/v1/inbox-items/files",
             post(create_file_capture).layer(DefaultBodyLimit::max(MAX_MULTIPART_BODY_BYTES)),
@@ -114,6 +118,62 @@ async fn create_text_capture(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR",
                 "Could not save Inbox item.",
+            )
+        }
+    }
+}
+
+async fn list_inbox_items(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+
+    match state.inbox_repository.list(&user.uid).await {
+        Ok(items) => (
+            StatusCode::OK,
+            Json(ListInboxItemsResponse {
+                inbox_items: items.into_iter().map(InboxItemResponse::from).collect(),
+            }),
+        )
+            .into_response(),
+        Err(error) => {
+            tracing::error!(%error, "could not list inbox items");
+            api_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                "Could not load Inbox items.",
+            )
+        }
+    }
+}
+
+async fn get_inbox_item(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(item_id): Path<String>,
+) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    let Ok(item_id) = Uuid::parse_str(&item_id) else {
+        return inbox_item_id_validation_error_response();
+    };
+
+    match state.inbox_repository.get(&user.uid, item_id).await {
+        Ok(Some(item)) => (
+            StatusCode::OK,
+            Json(GetInboxItemResponse {
+                inbox_item: InboxItemDetailResponse::from(item),
+            }),
+        )
+            .into_response(),
+        Ok(None) => inbox_item_not_found_response(),
+        Err(error) => {
+            tracing::error!(%error, "could not get inbox item");
+            api_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                "Could not load Inbox item.",
             )
         }
     }
@@ -267,6 +327,18 @@ fn validation_error_response() -> Response {
     )
 }
 
+fn inbox_item_id_validation_error_response() -> Response {
+    api_error_response(
+        StatusCode::BAD_REQUEST,
+        "VALIDATION_ERROR",
+        "Inbox item ID must be a valid UUID.",
+    )
+}
+
+fn inbox_item_not_found_response() -> Response {
+    api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Inbox item not found.")
+}
+
 fn file_validation_error_response() -> Response {
     api_error_response(
         StatusCode::BAD_REQUEST,
@@ -374,6 +446,18 @@ struct CreateTextCaptureResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ListInboxItemsResponse {
+    inbox_items: Vec<InboxItemResponse>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GetInboxItemResponse {
+    inbox_item: InboxItemDetailResponse,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct InboxItemResponse {
     id: Uuid,
     source_type: CaptureSourceType,
@@ -390,6 +474,36 @@ impl From<InboxItem> for InboxItemResponse {
             status: item.status,
             created_at: format_timestamp(item.created_at),
             updated_at: format_timestamp(item.updated_at),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InboxItemDetailResponse {
+    id: Uuid,
+    source_type: CaptureSourceType,
+    status: InboxStatus,
+    original_text: Option<String>,
+    original_filename: Option<String>,
+    content_type: Option<String>,
+    byte_size: Option<i64>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<InboxItemDetail> for InboxItemDetailResponse {
+    fn from(item: InboxItemDetail) -> Self {
+        Self {
+            id: item.item.id,
+            source_type: item.item.source_type,
+            status: item.item.status,
+            original_text: item.original_text,
+            original_filename: item.original_filename,
+            content_type: item.content_type,
+            byte_size: item.byte_size,
+            created_at: format_timestamp(item.item.created_at),
+            updated_at: format_timestamp(item.item.updated_at),
         }
     }
 }
@@ -426,7 +540,7 @@ mod tests {
     use crate::auth::{AuthenticatedUser, TokenVerifier};
     use crate::{
         domain::{CaptureSourceType, InboxStatus},
-        inbox::{FileCapture, InboxItem, InboxRepository},
+        inbox::{FileCapture, InboxItem, InboxItemDetail, InboxRepository},
         scanner::{FileScanner, ScanResult},
         storage::PrivateObjectStore,
     };
@@ -451,6 +565,8 @@ mod tests {
     struct TestInboxRepository {
         created: Mutex<Vec<(String, String)>>,
         files: Mutex<Vec<(String, FileCapture)>>,
+        listed_items: Mutex<Vec<(String, InboxItem)>>,
+        item_details: Mutex<Vec<(String, InboxItemDetail)>>,
         should_fail: bool,
     }
 
@@ -496,6 +612,47 @@ mod tests {
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             })
+        }
+
+        async fn list(&self, owner_uid: &str) -> anyhow::Result<Vec<InboxItem>> {
+            if self.should_fail {
+                anyhow::bail!("database read failed")
+            }
+
+            let mut items = self
+                .listed_items
+                .lock()
+                .expect("test repository lock should not be poisoned")
+                .iter()
+                .filter(|(owner, _)| owner == owner_uid)
+                .map(|(_, item)| item.clone())
+                .collect::<Vec<_>>();
+            items.sort_by(|left, right| {
+                right
+                    .created_at
+                    .cmp(&left.created_at)
+                    .then_with(|| right.id.cmp(&left.id))
+            });
+
+            Ok(items)
+        }
+
+        async fn get(
+            &self,
+            owner_uid: &str,
+            item_id: Uuid,
+        ) -> anyhow::Result<Option<InboxItemDetail>> {
+            if self.should_fail {
+                anyhow::bail!("database read failed")
+            }
+
+            Ok(self
+                .item_details
+                .lock()
+                .expect("test repository lock should not be poisoned")
+                .iter()
+                .find(|(owner, item)| owner == owner_uid && item.item.id == item_id)
+                .map(|(_, item)| item.clone()))
         }
     }
 
@@ -658,6 +815,18 @@ mod tests {
         Request::from_parts(parts, body)
     }
 
+    fn test_inbox_item(id: Uuid, source_type: CaptureSourceType, created_at: i64) -> InboxItem {
+        InboxItem {
+            id,
+            source_type,
+            status: InboxStatus::Captured,
+            created_at: OffsetDateTime::from_unix_timestamp(created_at)
+                .expect("test timestamp should be valid"),
+            updated_at: OffsetDateTime::from_unix_timestamp(created_at)
+                .expect("test timestamp should be valid"),
+        }
+    }
+
     #[tokio::test]
     async fn health_is_public() {
         let response = test_app()
@@ -766,6 +935,219 @@ mod tests {
                     "email": "member@example.com"
                 }
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn list_inbox_items_requires_authentication() {
+        let response = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/inbox-items")
+                    .body(Body::empty())
+                    .expect("list request should be valid"),
+            )
+            .await
+            .expect("router should respond");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response_json(response).await,
+            json!({
+                "error": {
+                    "code": "UNAUTHENTICATED",
+                    "message": "Authentication required."
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn list_inbox_items_returns_only_the_verified_users_metadata_newest_first() {
+        let repository = Arc::new(TestInboxRepository::default());
+        let older_id = Uuid::from_u128(1);
+        let newer_id = Uuid::from_u128(2);
+        let foreign_id = Uuid::from_u128(3);
+        repository
+            .listed_items
+            .lock()
+            .expect("test repository lock should not be poisoned")
+            .extend([
+                (
+                    "user-123".to_owned(),
+                    test_inbox_item(older_id, CaptureSourceType::Text, 1),
+                ),
+                (
+                    "user-123".to_owned(),
+                    test_inbox_item(newer_id, CaptureSourceType::Pdf, 2),
+                ),
+                (
+                    "other-user".to_owned(),
+                    test_inbox_item(foreign_id, CaptureSourceType::Image, 3),
+                ),
+            ]);
+
+        let response = test_app_with(repository)
+            .oneshot(with_valid_token(
+                Request::builder()
+                    .uri("/api/v1/inbox-items")
+                    .body(Body::empty())
+                    .expect("list request should be valid"),
+            ))
+            .await
+            .expect("router should respond");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = response_json(response).await;
+        assert_eq!(response["inboxItems"].as_array().map(Vec::len), Some(2));
+        assert_eq!(response["inboxItems"][0]["id"], newer_id.to_string());
+        assert_eq!(response["inboxItems"][0]["sourceType"], "pdf");
+        assert_eq!(response["inboxItems"][1]["id"], older_id.to_string());
+        assert!(response["inboxItems"][0].get("ownerUid").is_none());
+        assert!(response["inboxItems"][0].get("storageKey").is_none());
+        assert!(response["inboxItems"][0].get("originalText").is_none());
+    }
+
+    #[tokio::test]
+    async fn get_inbox_item_returns_private_text_without_owner_or_storage_fields() {
+        let repository = Arc::new(TestInboxRepository::default());
+        let item_id = Uuid::from_u128(4);
+        repository
+            .item_details
+            .lock()
+            .expect("test repository lock should not be poisoned")
+            .push((
+                "user-123".to_owned(),
+                InboxItemDetail {
+                    item: test_inbox_item(item_id, CaptureSourceType::Text, 4),
+                    original_text: Some("Renew passport".to_owned()),
+                    original_filename: None,
+                    content_type: None,
+                    byte_size: None,
+                },
+            ));
+
+        let response = test_app_with(repository)
+            .oneshot(with_valid_token(
+                Request::builder()
+                    .uri(format!("/api/v1/inbox-items/{item_id}"))
+                    .body(Body::empty())
+                    .expect("detail request should be valid"),
+            ))
+            .await
+            .expect("router should respond");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = response_json(response).await;
+        assert_eq!(response["inboxItem"]["originalText"], "Renew passport");
+        assert!(response["inboxItem"].get("ownerUid").is_none());
+        assert!(response["inboxItem"].get("storageKey").is_none());
+    }
+
+    #[tokio::test]
+    async fn get_inbox_item_returns_safe_file_metadata_without_storage_key() {
+        let repository = Arc::new(TestInboxRepository::default());
+        let item_id = Uuid::from_u128(5);
+        repository
+            .item_details
+            .lock()
+            .expect("test repository lock should not be poisoned")
+            .push((
+                "user-123".to_owned(),
+                InboxItemDetail {
+                    item: test_inbox_item(item_id, CaptureSourceType::Pdf, 5),
+                    original_text: None,
+                    original_filename: Some("letter.pdf".to_owned()),
+                    content_type: Some("application/pdf".to_owned()),
+                    byte_size: Some(512),
+                },
+            ));
+
+        let response = test_app_with(repository)
+            .oneshot(with_valid_token(
+                Request::builder()
+                    .uri(format!("/api/v1/inbox-items/{item_id}"))
+                    .body(Body::empty())
+                    .expect("detail request should be valid"),
+            ))
+            .await
+            .expect("router should respond");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = response_json(response).await;
+        assert_eq!(response["inboxItem"]["originalFilename"], "letter.pdf");
+        assert_eq!(response["inboxItem"]["contentType"], "application/pdf");
+        assert_eq!(response["inboxItem"]["byteSize"], 512);
+        assert!(response["inboxItem"].get("storageKey").is_none());
+    }
+
+    #[tokio::test]
+    async fn get_inbox_item_rejects_malformed_ids_with_a_validation_envelope() {
+        let response = test_app()
+            .oneshot(with_valid_token(
+                Request::builder()
+                    .uri("/api/v1/inbox-items/not-a-uuid")
+                    .body(Body::empty())
+                    .expect("detail request should be valid"),
+            ))
+            .await
+            .expect("router should respond");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(response).await,
+            json!({
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Inbox item ID must be a valid UUID."
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn get_inbox_item_hides_cross_owner_existence_behind_not_found() {
+        let repository = Arc::new(TestInboxRepository::default());
+        let foreign_id = Uuid::from_u128(6);
+        repository
+            .item_details
+            .lock()
+            .expect("test repository lock should not be poisoned")
+            .push((
+                "other-user".to_owned(),
+                InboxItemDetail {
+                    item: test_inbox_item(foreign_id, CaptureSourceType::Text, 6),
+                    original_text: Some("Private note".to_owned()),
+                    original_filename: None,
+                    content_type: None,
+                    byte_size: None,
+                },
+            ));
+
+        let missing_response = test_app_with(repository.clone())
+            .oneshot(with_valid_token(
+                Request::builder()
+                    .uri(format!("/api/v1/inbox-items/{}", Uuid::from_u128(7)))
+                    .body(Body::empty())
+                    .expect("detail request should be valid"),
+            ))
+            .await
+            .expect("router should respond");
+        let foreign_response = test_app_with(repository)
+            .oneshot(with_valid_token(
+                Request::builder()
+                    .uri(format!("/api/v1/inbox-items/{foreign_id}"))
+                    .body(Body::empty())
+                    .expect("detail request should be valid"),
+            ))
+            .await
+            .expect("router should respond");
+
+        assert_eq!(missing_response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(foreign_response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(missing_response).await,
+            response_json(foreign_response).await
         );
     }
 
@@ -943,9 +1325,8 @@ mod tests {
     #[tokio::test]
     async fn text_capture_hides_repository_errors() {
         let repository = Arc::new(TestInboxRepository {
-            created: Mutex::new(Vec::new()),
-            files: Mutex::new(Vec::new()),
             should_fail: true,
+            ..Default::default()
         });
         let response = test_app_with(repository)
             .oneshot(
@@ -1266,9 +1647,8 @@ mod tests {
         let object_store = Arc::new(TestObjectStore::default());
         let response = test_app_with_dependencies(
             Arc::new(TestInboxRepository {
-                created: Mutex::new(Vec::new()),
-                files: Mutex::new(Vec::new()),
                 should_fail: true,
+                ..Default::default()
             }),
             Arc::new(TestScanner::default()),
             object_store.clone(),

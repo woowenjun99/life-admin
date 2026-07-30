@@ -3,7 +3,11 @@ import { expect, test } from "bun:test";
 import {
   authorizationHeaders,
   createTextCapture,
+  fetchInboxItem,
+  fetchInboxItems,
   parseCurrentUser,
+  parseInboxItemDetail,
+  parseInboxItems,
   uploadFileCapture,
   validateCaptureFile,
 } from "./api";
@@ -54,6 +58,116 @@ test("createTextCapture sends a bearer JSON request and parses the safe item res
     expect(headers.get("Authorization")).toBe("Bearer firebase-id-token");
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(request?.init?.body).toBe('{"text":"Renew passport"}');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchInboxItems sends a bearer request and parses metadata-only results", async () => {
+  const originalFetch = globalThis.fetch;
+  let request: { input: RequestInfo | URL; init?: RequestInit } | undefined;
+  globalThis.fetch = (async (input, init) => {
+    request = { input, init };
+    return Response.json({
+      inboxItems: [
+        {
+          id: "item-789",
+          sourceType: "pdf",
+          status: "captured",
+          createdAt: "2026-07-30T00:00:00Z",
+          updatedAt: "2026-07-30T00:00:00Z",
+        },
+      ],
+    });
+  }) as typeof fetch;
+
+  try {
+    const items = await fetchInboxItems({
+      getIdToken: async () => "firebase-id-token",
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.sourceType).toBe("pdf");
+    expect(request?.input).toBe("/api/v1/inbox-items");
+    expect(request?.init?.cache).toBe("no-store");
+    expect(new Headers(request?.init?.headers).get("Authorization")).toBe(
+      "Bearer firebase-id-token",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Inbox parsers reject private fields in a list and require valid detail payloads", () => {
+  expect(() =>
+    parseInboxItems({
+      inboxItems: [
+        {
+          id: "item-123",
+          sourceType: "text",
+          status: "captured",
+          createdAt: "2026-07-30T00:00:00Z",
+          updatedAt: "2026-07-30T00:00:00Z",
+          originalText: "This field is not list metadata",
+        },
+      ],
+    }),
+  ).toThrow("The Inbox response was invalid.");
+
+  expect(
+    parseInboxItemDetail({
+      inboxItem: {
+        id: "item-123",
+        sourceType: "text",
+        status: "captured",
+        originalText: "Renew passport",
+        originalFilename: null,
+        contentType: null,
+        byteSize: null,
+        createdAt: "2026-07-30T00:00:00Z",
+        updatedAt: "2026-07-30T00:00:00Z",
+      },
+    }),
+  ).toMatchObject({ originalText: "Renew passport" });
+
+  expect(() =>
+    parseInboxItemDetail({
+      inboxItem: {
+        id: "item-456",
+        sourceType: "pdf",
+        status: "captured",
+        originalText: null,
+        originalFilename: "letter.pdf",
+        contentType: "application/pdf",
+        byteSize: 0,
+        createdAt: "2026-07-30T00:00:00Z",
+        updatedAt: "2026-07-30T00:00:00Z",
+      },
+    }),
+  ).toThrow("The Inbox item response was invalid.");
+});
+
+test("fetchInboxItem requests one private item and keeps not-found errors", async () => {
+  const originalFetch = globalThis.fetch;
+  let request: { input: RequestInfo | URL; init?: RequestInit } | undefined;
+  globalThis.fetch = (async (input, init) => {
+    request = { input, init };
+    return Response.json(
+      {
+        error: { code: "NOT_FOUND", message: "Inbox item not found." },
+      },
+      { status: 404 },
+    );
+  }) as typeof fetch;
+
+  try {
+    await expect(
+      fetchInboxItem(
+        { getIdToken: async () => "firebase-id-token" },
+        "item-123",
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
+    expect(request?.input).toBe("/api/v1/inbox-items/item-123");
   } finally {
     globalThis.fetch = originalFetch;
   }

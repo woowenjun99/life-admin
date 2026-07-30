@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   createTextCapture,
+  type InboxItem,
   uploadFileCapture,
   validateCaptureFile,
 } from "@/lib/api";
@@ -28,7 +29,11 @@ const FOCUSABLE_SELECTOR = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(", ");
 
-export function CaptureForms() {
+type CaptureFormsProps = {
+  onCaptured?(item: InboxItem): void;
+};
+
+export function CaptureForms({ onCaptured }: CaptureFormsProps) {
   const [mode, setMode] = useState<CaptureMode | null>(null);
   const launchButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -65,16 +70,24 @@ export function CaptureForms() {
         </div>
       </section>
 
-      {mode ? <CaptureModal initialMode={mode} onClose={closeModal} /> : null}
+      {mode ? (
+        <CaptureModal
+          initialMode={mode}
+          onCaptured={onCaptured}
+          onClose={closeModal}
+        />
+      ) : null}
     </>
   );
 }
 
 function CaptureModal({
   initialMode,
+  onCaptured,
   onClose,
 }: {
   initialMode: CaptureMode;
+  onCaptured?(item: InboxItem): void;
   onClose(): void;
 }) {
   const { user } = useAuth();
@@ -144,9 +157,10 @@ function CaptureModal({
 
     setTextState({ status: "submitting" });
     try {
-      await createTextCapture(user, text);
+      const item = await createTextCapture(user, text);
       setText("");
       setTextState({ status: "success", message: "Private note captured." });
+      onCaptured?.(item);
     } catch (error) {
       setTextState({ status: "error", message: captureErrorMessage(error) });
     }
@@ -181,7 +195,7 @@ function CaptureModal({
 
     setFileState({ status: "submitting" });
     try {
-      await uploadFileCapture(user, file);
+      const item = await uploadFileCapture(user, file);
       setFile(null);
       setFileValidation(null);
       if (fileInput.current) {
@@ -191,6 +205,7 @@ function CaptureModal({
         status: "success",
         message: "Private file captured and scanned.",
       });
+      onCaptured?.(item);
     } catch (error) {
       setFileState({ status: "error", message: captureErrorMessage(error) });
     }

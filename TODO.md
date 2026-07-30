@@ -94,7 +94,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Highlighted next action.
   - [x] Status: `ready`, `waiting`, or `complete`.
   - [x] Step title, rationale, status, due date, and waiting-on detail.
-- [ ] Scope every read and write to the authenticated Firebase UID.
+- [x] Scope every read and write to the authenticated Firebase UID.
 - [ ] Add repository tests for ownership and plan-status transitions.
 
 ## Backend API
@@ -105,7 +105,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Enforce type and size limits.
   - [x] Store files outside publicly accessible paths.
   - [x] Reject unsafe filenames and invalid content types.
-- [ ] Add `GET /api/v1/inbox-items` and `GET /api/v1/inbox-items/:id`.
+- [x] Add `GET /api/v1/inbox-items` and `GET /api/v1/inbox-items/:id`.
 - [ ] Add `PATCH /api/v1/inbox-items/:id` for user-reviewed fields.
 - [ ] Add `POST /api/v1/inbox-items/:id/extract`.
 - [ ] Add `POST /api/v1/inbox-items/:id/plans` after review confirmation.
@@ -148,8 +148,8 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [ ] Build `/inbox`.
   - [x] Text capture form.
   - [x] File-upload control with validation feedback.
-  - [ ] Inbox list with processing status.
-  - [ ] Empty, loading, retry, and error states.
+  - [x] Inbox list with processing status.
+  - [x] Empty, loading, retry, and error states.
 - [ ] Build `/inbox/[id]/review`.
   - [ ] Show original capture alongside extracted suggestions.
   - [ ] Let the user edit and remove every suggestion.

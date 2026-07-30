@@ -1067,6 +1067,100 @@ footer p {
   border-color: #d16043;
 }
 
+.inbox-list-section {
+  width: min(100%, 48rem);
+  margin-top: 3rem;
+}
+
+.inbox-list-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.inbox-list-heading h2 {
+  margin-top: 0.7rem;
+  color: #244b43;
+  font-size: clamp(1.8rem, 4vw, 2.35rem);
+  line-height: 1.04;
+}
+
+.inbox-list-count {
+  color: #71847d;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.inbox-list-notice {
+  margin-top: 1.35rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #d9ddd3;
+  border-radius: 0.7rem;
+  background: rgb(255 253 250 / 68%);
+  color: #647870;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.inbox-list-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-color: #e4b2a5;
+  color: #8e3e2d;
+}
+
+.inbox-list-error .button {
+  flex: 0 0 auto;
+  border: 1px solid #d8d8cd;
+  cursor: pointer;
+}
+
+.inbox-items-list {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1.35rem;
+  padding: 0;
+  list-style: none;
+}
+
+.inbox-item-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #d9ddd3;
+  border-radius: 0.75rem;
+  background: rgb(255 253 250 / 72%);
+}
+
+.inbox-item-label {
+  color: #315e53;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.inbox-item-card time {
+  display: block;
+  margin-top: 0.35rem;
+  color: #71847d;
+  font-size: 0.78rem;
+}
+
+.inbox-item-status {
+  flex: 0 0 auto;
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  background: #e2efe0;
+  color: #315e53;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .capture-form {
   display: grid;
   gap: 0.72rem;

@@ -35,7 +35,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [x] Confirm the app name, visual direction, and a short product tagline.
   - [x] Name: **Life Inbox**.
   - [x] Tagline: **Turn life clutter into one clear next action.**
-- [ ] Add this product overview to `README.md`.
+- [x] Add this product overview to `README.md`.
 - [x] Add server-only AI-provider configuration to `backend/.env.example`.
 - [ ] Add only public browser configuration to `frontend/.env.example`.
 - [ ] Add a small architecture diagram to the README.
@@ -146,6 +146,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Show plans waiting on someone or something.
   - [x] Show recently completed steps.
   - [x] Add a prominent capture entry point.
+  - [x] Guide a brand-new workspace from capture through review to one Next action.
   - [x] Show collapsed Archived Plans and let the user restore them.
 - [x] Build Inbox capture on `/today`.
   - [x] Text capture form.

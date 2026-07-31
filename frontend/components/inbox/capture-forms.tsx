@@ -17,6 +17,11 @@ import {
 } from "@/lib/capture-mode";
 import { focusTrapTargetIndex } from "@/lib/focus-trap";
 
+import {
+  CaptureLauncher,
+  type CaptureLauncherVariant,
+} from "./capture-launcher";
+
 type CaptureState =
   | { status: "idle" }
   | { status: "submitting" }
@@ -34,9 +39,13 @@ const FOCUSABLE_SELECTOR = [
 
 type CaptureFormsProps = {
   onCaptured?(result: CaptureResult): void;
+  variant?: CaptureLauncherVariant;
 };
 
-export function CaptureForms({ onCaptured }: CaptureFormsProps) {
+export function CaptureForms({
+  onCaptured,
+  variant = "default",
+}: CaptureFormsProps) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -60,62 +69,12 @@ export function CaptureForms({ onCaptured }: CaptureFormsProps) {
 
   return (
     <>
-      <section className="capture-launcher">
-        <div className="capture-launcher-copy">
-          <p className="workspace-empty-kicker">Start a private capture</p>
-          <h2>Save the thing you want to remember.</h2>
-          <p>
-            Capture a note or one supported file. Files are checked before they
-            are stored.
-          </p>
-          <div className="capture-launcher-actions">
-            <button
-              className="button button-primary"
-              onClick={() => setMode("text")}
-              ref={launchButtonRef}
-              type="button"
-            >
-              Save a note <span aria-hidden="true">↗</span>
-            </button>
-            <button
-              className="button button-ghost"
-              onClick={() => setMode("file")}
-              type="button"
-            >
-              Upload a file
-            </button>
-          </div>
-        </div>
-        <aside
-          aria-label="How Life Inbox works"
-          className="capture-launcher-guide"
-        >
-          <p className="workspace-empty-kicker">A private flow</p>
-          <ol>
-            <li>
-              <span>1</span>
-              <div>
-                <strong>Capture it</strong>
-                <p>Save the loose end while it is fresh.</p>
-              </div>
-            </li>
-            <li>
-              <span>2</span>
-              <div>
-                <strong>Review it</strong>
-                <p>Adjust every suggestion before a Plan is made.</p>
-              </div>
-            </li>
-            <li>
-              <span>3</span>
-              <div>
-                <strong>Choose one next action</strong>
-                <p>Nothing happens outside Life Inbox.</p>
-              </div>
-            </li>
-          </ol>
-        </aside>
-      </section>
+      <CaptureLauncher
+        onCaptureFile={() => setMode("file")}
+        onCaptureText={() => setMode("text")}
+        primaryButtonRef={launchButtonRef}
+        variant={variant}
+      />
 
       {mode ? (
         <CaptureModal

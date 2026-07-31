@@ -1205,6 +1205,10 @@ footer p {
     rgb(255 253 250 / 76%);
 }
 
+.capture-launcher-first-task {
+  margin-top: 2rem;
+}
+
 .capture-launcher-copy {
   min-width: 0;
 }

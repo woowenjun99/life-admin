@@ -112,7 +112,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [x] Add `GET /api/v1/plans/:id`.
 - [x] Add plan listing after confirming the Inbox/Plan navigation UX.
 - [x] Add `PATCH /api/v1/plans/:id/steps/:stepId` to update step status.
-- [ ] Add delete/archive endpoints only after confirming expected UX.
+- [x] Add reversible archive and restore endpoints for planned Plan-capture pairs.
 - [ ] Return consistent API error envelopes for validation, authorization, not
       found, provider failure, and unexpected errors.
 
@@ -146,6 +146,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Show plans waiting on someone or something.
   - [x] Show recently completed steps.
   - [x] Add a prominent capture entry point.
+  - [x] Show collapsed Archived Plans and let the user restore them.
 - [x] Build Inbox capture on `/today`.
   - [x] Text capture form.
   - [x] File-upload control with validation feedback.
@@ -160,10 +161,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Show summary, next action, ordered steps, and rationale.
   - [x] Let the user mark a step complete or waiting.
   - [x] Promote the next unfinished ready step as the next action.
-- [ ] Add an explicit **Revise Plan** flow for planned items.
-  - [ ] Let the user return to the suggestion editor and make changes.
-  - [ ] Require confirmation before replacing or versioning the approved Plan;
-        never silently change its existing steps.
+  - [x] Let the user archive a Plan after confirmation and return to Today.
 - [ ] Make mobile layout usable for quick captures.
 - [ ] Add accessible labels, keyboard navigation, and visible focus states.
 
@@ -174,7 +172,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [ ] Keep AI credentials and service credentials server-only.
 - [ ] Do not log raw personal captures in production logs.
 - [x] Explain when capture data is sent to the AI provider.
-- [ ] Provide user-facing delete/archive controls.
+- [x] Provide user-facing archive controls.
 - [ ] Add a short privacy statement for the demo and project submission.
 
 ## Test and demo readiness
@@ -209,3 +207,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [ ] User-approved calendar or reminder drafts.
 - [ ] Weekly life-admin review.
 - [ ] Family/caregiver sharing with explicit permissions.
+- [ ] Add an explicit **Revise Plan** flow for planned items.
+  - [ ] Let the user return to the suggestion editor and make changes.
+  - [ ] Require confirmation before replacing or versioning the approved Plan;
+        never silently change its existing steps.

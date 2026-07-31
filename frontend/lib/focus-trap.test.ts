@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 
-import { focusTrapTargetIndex } from "./focus-trap";
+import {
+  focusTrapTargetIndex,
+  restoreFocusAfterDialogClose,
+} from "./focus-trap";
 
 test("wraps forward tabbing from the last dialog control to the first", () => {
   expect(focusTrapTargetIndex(4, 3, false)).toBe(0);
@@ -18,4 +21,20 @@ test("moves focus inside the dialog when it has escaped", () => {
 test("does not interfere with tabbing between dialog controls", () => {
   expect(focusTrapTargetIndex(4, 1, false)).toBeNull();
   expect(focusTrapTargetIndex(4, 2, true)).toBeNull();
+});
+
+test("returns focus after a dialog has closed", () => {
+  let scheduled: (() => void) | undefined;
+  let focusCount = 0;
+
+  restoreFocusAfterDialogClose(
+    { focus: () => focusCount++ },
+    (callback) => {
+      scheduled = callback;
+    },
+  );
+
+  expect(focusCount).toBe(0);
+  scheduled?.();
+  expect(focusCount).toBe(1);
 });

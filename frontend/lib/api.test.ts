@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  archivePlan,
   authorizationHeaders,
   createTextCapture,
   fetchInboxItem,
@@ -14,6 +15,7 @@ import {
   parseInboxItems,
   parsePlan,
   parsePlans,
+  restorePlan,
   retryExtraction,
   saveSuggestions,
   updatePlanStep,
@@ -472,9 +474,8 @@ test("fetchPlans uses a bearer token and rejects malformed step timestamps", asy
   }) as typeof fetch;
 
   try {
-    const plans = await fetchPlans({
-      getIdToken: async () => "firebase-id-token",
-    });
+    const user = { getIdToken: async () => "firebase-id-token" };
+    const plans = await fetchPlans(user);
 
     expect(plans[0]?.steps[0]?.updatedAt).toBe("2026-07-31T00:00:00Z");
     expect(request?.input).toBe("/api/v1/plans");
@@ -482,6 +483,9 @@ test("fetchPlans uses a bearer token and rejects malformed step timestamps", asy
     expect(new Headers(request?.init?.headers).get("Authorization")).toBe(
       "Bearer firebase-id-token",
     );
+
+    await fetchPlans(user, { archived: true });
+    expect(request?.input).toBe("/api/v1/plans?archived=true");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -513,6 +517,34 @@ test("fetchPlans uses a bearer token and rejects malformed step timestamps", asy
       ],
     }),
   ).toThrow("The Plans response was invalid.");
+});
+
+test("archive and restore Plan calls use bearer POST requests without parsing a body", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input, init) => {
+    requests.push({ input, init });
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+
+  try {
+    const user = { getIdToken: async () => "firebase-id-token" };
+    await archivePlan(user, "plan-123");
+    await restorePlan(user, "plan-123");
+
+    expect(requests.map(({ input }) => input)).toEqual([
+      "/api/v1/plans/plan-123/archive",
+      "/api/v1/plans/plan-123/restore",
+    ]);
+    for (const request of requests) {
+      expect(request.init?.method).toBe("POST");
+      expect(new Headers(request.init?.headers).get("Authorization")).toBe(
+        "Bearer firebase-id-token",
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("PDF preview rejects a non-PDF response and plan parsing rejects provider identifiers", async () => {

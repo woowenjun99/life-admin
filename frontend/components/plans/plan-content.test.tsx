@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { PlanStep } from "@/lib/api";
 
+import { ArchivePlanDialog } from "./archive-plan-dialog";
 import { PlanStepControls, planStepStatusLabel } from "./plan-step-controls";
 
 const handlers = {
@@ -76,4 +77,22 @@ test("Plan step controls represent Waiting and completed steps accurately", () =
   expect(planStepStatusLabel(step("ready", true))).toBe("Next action");
   expect(planStepStatusLabel(step("waiting"))).toBe("Waiting");
   expect(planStepStatusLabel(step("complete"))).toBe("Complete");
+});
+
+test("archiving requires an accessible confirmation with cancel and error states", () => {
+  const markup = renderToStaticMarkup(
+    <ArchivePlanDialog
+      error="We could not archive this Plan. Please try again."
+      isArchiving={false}
+      onClose={() => undefined}
+      onConfirm={() => undefined}
+    />,
+  );
+
+  expect(markup).toContain('role="alertdialog"');
+  expect(markup).toContain("Archive this Plan?");
+  expect(markup).toContain("You can restore the same Plan and steps");
+  expect(markup).toContain("Cancel");
+  expect(markup).toContain("Archive Plan");
+  expect(markup).toContain("We could not archive this Plan.");
 });

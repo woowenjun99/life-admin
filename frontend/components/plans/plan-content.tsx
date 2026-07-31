@@ -1,17 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth/auth-provider";
-import { fetchPlan, type Plan, type PlanStep, updatePlanStep } from "@/lib/api";
+import {
+  archivePlan,
+  fetchPlan,
+  type Plan,
+  type PlanStep,
+  updatePlanStep,
+} from "@/lib/api";
+import { restoreFocusAfterDialogClose } from "@/lib/focus-trap";
+import { ArchivePlanDialog } from "./archive-plan-dialog";
 import { PlanStepControls } from "./plan-step-controls";
 
 export function PlanContent({ planId }: { planId: string }) {
   const { user } = useAuth();
+  const router = useRouter();
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const archiveButtonRef = useRef<HTMLButtonElement>(null);
   const [pendingStepId, setPendingStepId] = useState<string | null>(null);
   const [waitingStepId, setWaitingStepId] = useState<string | null>(null);
   const [waitingOn, setWaitingOn] = useState("");
@@ -61,6 +75,27 @@ export function PlanContent({ planId }: { planId: string }) {
     setWaitingOn(step.waitingOn ?? "");
   };
 
+  const archive = useCallback(async () => {
+    if (!user) return;
+
+    setIsArchiving(true);
+    setArchiveError(null);
+    try {
+      await archivePlan(user, planId);
+      router.replace("/today");
+    } catch {
+      setArchiveError("We could not archive this Plan. Please try again.");
+      setIsArchiving(false);
+    }
+  }, [planId, router, user]);
+
+  const closeArchiveDialog = useCallback(() => {
+    if (isArchiving) return;
+
+    setArchiveOpen(false);
+    restoreFocusAfterDialogClose(archiveButtonRef.current);
+  }, [isArchiving]);
+
   const submitWaiting = (event: FormEvent<HTMLFormElement>, step: PlanStep) => {
     event.preventDefault();
     const detail = waitingOn.trim();
@@ -101,9 +136,22 @@ export function PlanContent({ planId }: { planId: string }) {
           <p className="workspace-empty-kicker">Your approved Plan</p>
           <h1>One clear next action.</h1>
         </div>
-        <Link className="text-link" href="/today">
-          Back to Today <span aria-hidden="true">←</span>
-        </Link>
+        <div className="plan-heading-actions">
+          <Link className="text-link" href="/today">
+            Back to Today <span aria-hidden="true">←</span>
+          </Link>
+          <button
+            className="button button-small button-ghost plan-archive-button"
+            onClick={() => {
+              setArchiveError(null);
+              setArchiveOpen(true);
+            }}
+            ref={archiveButtonRef}
+            type="button"
+          >
+            Archive Plan
+          </button>
+        </div>
       </div>
       <p className="plan-summary">{plan.summary}</p>
       {nextAction ? (
@@ -180,6 +228,14 @@ export function PlanContent({ planId }: { planId: string }) {
         This Plan is a guide for you. Updating its steps never sends messages,
         creates events, or takes action outside Life Inbox.
       </p>
+      {archiveOpen ? (
+        <ArchivePlanDialog
+          error={archiveError}
+          isArchiving={isArchiving}
+          onClose={closeArchiveDialog}
+          onConfirm={() => void archive()}
+        />
+      ) : null}
     </section>
   );
 }

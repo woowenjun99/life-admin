@@ -3,7 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { Plan, PlanStep } from "@/lib/api";
 
-import { TodayDashboard, todayDashboardData } from "./today-dashboard";
+import {
+  ArchivedPlans,
+  TodayDashboard,
+  todayDashboardData,
+} from "./today-dashboard";
 
 function step(
   id: string,
@@ -102,4 +106,51 @@ test("Today orders recent completed steps, limits them, and exposes recovery sta
   );
   expect(error).toContain("We could not load your Plans.");
   expect(error).toContain("Retry");
+});
+
+test("Archived Plans stays collapsed, handles recovery states, and offers Restore without a Plan link", () => {
+  const archived = renderToStaticMarkup(
+    <ArchivedPlans
+      onRestore={() => undefined}
+      onRetry={() => undefined}
+      restoreError={null}
+      restoringPlanId={null}
+      state={{
+        status: "ready",
+        plans: [
+          plan("archived", "waiting", "2026-07-31T00:00:00Z", [
+            step("archived-step", "waiting", "2026-07-31T00:00:00Z"),
+          ]),
+        ],
+      }}
+    />,
+  );
+  expect(archived).toContain("<details");
+  expect(archived).toContain("Archived Plans (1)");
+  expect(archived).toContain("Restore");
+  expect(archived).not.toContain('href="/plans/archived"');
+
+  const empty = renderToStaticMarkup(
+    <ArchivedPlans
+      onRestore={() => undefined}
+      onRetry={() => undefined}
+      restoreError={null}
+      restoringPlanId={null}
+      state={{ status: "ready", plans: [] }}
+    />,
+  );
+  expect(empty).toContain("No archived Plans.");
+
+  const retry = renderToStaticMarkup(
+    <ArchivedPlans
+      onRestore={() => undefined}
+      onRetry={() => undefined}
+      restoreError="We could not restore this Plan. Please try again."
+      restoringPlanId="archived"
+      state={{ status: "error" }}
+    />,
+  );
+  expect(retry).toContain("We could not load archived Plans.");
+  expect(retry).toContain("We could not restore this Plan.");
+  expect(retry).toContain("Retry");
 });

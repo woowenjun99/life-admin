@@ -306,7 +306,7 @@ function CaptureModal({
           <span aria-hidden="true">×</span>
         </button>
         <p className="workspace-empty-kicker">Private Inbox capture</p>
-        <h2 id="capture-dialog-heading">Save it while it is on your mind.</h2>
+        <h2 id="capture-dialog-heading">Add to your Inbox.</h2>
         <fieldset className="capture-mode-switcher">
           <legend className="visually-hidden">Capture type</legend>
           <button
@@ -338,11 +338,10 @@ function CaptureModal({
         {mode === "text" ? (
           <form className="capture-form" onSubmit={submitText}>
             <div className="capture-form-heading">
-              <h3>Save a note</h3>
+              <h3>Write a note</h3>
               <p>
-                Keep a thought, reminder, or loose end in your private Inbox.
-                Notes are sent to the configured AI provider to draft
-                suggestions for your review.
+                Save a thought, reminder, or loose end. Life Inbox drafts
+                suggestions for your review; nothing happens outside the app.
               </p>
             </div>
             <label htmlFor="capture-text">What do you want to remember?</label>

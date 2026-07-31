@@ -27,6 +27,11 @@ export type TodayPlansState =
   | { status: "error" }
   | { status: "ready"; plans: Plan[] };
 
+export type ArchivedPlansState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; plans: Plan[] };
+
 export function todayDashboardData(plans: Plan[]): TodayDashboardData {
   const readyPlans = plans.flatMap((plan) => {
     if (plan.status !== "ready") return [];
@@ -56,6 +61,76 @@ export function todayDashboardData(plans: Plan[]): TodayDashboardData {
     waitingPlans: plans.filter((plan) => plan.status === "waiting"),
     recentlyCompleted,
   };
+}
+
+export function ArchivedPlans({
+  onRestore,
+  onRetry,
+  restoreError,
+  restoringPlanId,
+  state,
+}: {
+  onRestore(planId: string): void;
+  onRetry(): void;
+  restoreError: string | null;
+  restoringPlanId: string | null;
+  state: ArchivedPlansState;
+}) {
+  return (
+    <details className="today-archived-plans">
+      <summary>
+        Archived Plans
+        {state.status === "ready" ? ` (${state.plans.length})` : ""}
+      </summary>
+      <div className="today-archived-content">
+        {restoreError ? (
+          <p className="today-archive-error" role="alert">
+            {restoreError}
+          </p>
+        ) : null}
+        {state.status === "loading" ? (
+          <p aria-busy="true" className="dashboard-notice">
+            Loading archived Plans…
+          </p>
+        ) : null}
+        {state.status === "error" ? (
+          <div className="dashboard-notice dashboard-error" role="alert">
+            <p>We could not load archived Plans. Please try again.</p>
+            <button
+              className="button button-ghost"
+              onClick={onRetry}
+              type="button"
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
+        {state.status === "ready" && state.plans.length === 0 ? (
+          <p className="dashboard-notice">No archived Plans.</p>
+        ) : null}
+        {state.status === "ready" && state.plans.length > 0 ? (
+          <ul className="today-archive-list">
+            {state.plans.map((plan) => (
+              <li key={plan.id}>
+                <div>
+                  <strong>{plan.summary}</strong>
+                  <span>{plan.status}</span>
+                </div>
+                <button
+                  className="button button-small button-ghost"
+                  disabled={restoringPlanId !== null}
+                  onClick={() => onRestore(plan.id)}
+                  type="button"
+                >
+                  {restoringPlanId === plan.id ? "Restoring…" : "Restore"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </details>
+  );
 }
 
 export function TodayDashboard({

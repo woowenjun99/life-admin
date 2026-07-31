@@ -1075,6 +1075,83 @@ footer p {
   line-height: 1.05;
 }
 
+.today-archived-plans {
+  margin-top: 1.5rem;
+  border-top: 1px solid #d9ddd3;
+}
+
+.today-archived-plans summary {
+  padding: 1rem 0;
+  color: #315e53;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.today-archived-plans summary:hover {
+  color: #d16043;
+}
+
+.today-archived-content {
+  display: grid;
+  gap: 0.85rem;
+  padding-bottom: 1.25rem;
+}
+
+.today-archive-list {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.today-archive-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid #d9ddd3;
+  border-radius: 0.75rem;
+  background: rgb(255 253 250 / 60%);
+}
+
+.today-archive-list li > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.3rem;
+}
+
+.today-archive-list strong {
+  color: #315e53;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.today-archive-list span {
+  color: #71847d;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.today-archive-list .button {
+  flex: 0 0 auto;
+  border: 1px solid #d8d8cd;
+  cursor: pointer;
+}
+
+.today-archive-error,
+.plan-archive-error {
+  padding: 0.72rem 0.8rem;
+  border-radius: 0.6rem;
+  background: #fae6df;
+  color: #953f2d;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .today-plan-list {
   display: grid;
   gap: 0.7rem;
@@ -1315,7 +1392,11 @@ footer p {
   display: grid;
   gap: 0.72rem;
   min-width: 0;
-  margin-top: 1.8rem;
+  margin-top: 1.25rem;
+  padding: clamp(1rem, 3vw, 1.35rem);
+  border: 1px solid #e1e4da;
+  border-radius: 0.9rem;
+  background: rgb(255 254 251 / 72%);
 }
 
 .capture-form-heading {
@@ -1324,16 +1405,16 @@ footer p {
 
 .capture-form h3 {
   color: #244b43;
-  font-size: clamp(1.8rem, 4vw, 2.35rem);
-  line-height: 1;
+  font-size: clamp(1.65rem, 3.1vw, 2.05rem);
+  line-height: 1.05;
 }
 
 .capture-form-heading > p:last-child {
-  max-width: 35ch;
-  margin-top: 0.65rem;
+  max-width: none;
+  margin-top: 0.5rem;
   color: #687b74;
   font-size: 0.88rem;
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .capture-form > label {
@@ -1354,7 +1435,7 @@ footer p {
 }
 
 .capture-form textarea {
-  min-height: 9.4rem;
+  min-height: 7.5rem;
   padding: 0.8rem 0.9rem;
   resize: vertical;
   line-height: 1.5;
@@ -1434,11 +1515,11 @@ footer p {
 .capture-modal {
   position: relative;
   z-index: 1;
-  width: min(100%, 44rem);
+  width: min(100%, 40rem);
   max-height: calc(100svh - 2rem);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: clamp(1.7rem, 5vw, 3rem);
+  padding: clamp(1.5rem, 4vw, 2.25rem);
   border: 1px solid rgb(35 70 63 / 12%);
   border-radius: 1.25rem;
   background: #fffdfa;
@@ -1446,11 +1527,11 @@ footer p {
 }
 
 .capture-modal > h2 {
-  max-width: 14ch;
-  margin-top: 0.7rem;
+  max-width: 16ch;
+  margin-top: 0.45rem;
   color: #183c36;
-  font-size: clamp(2.35rem, 6vw, 3.65rem);
-  line-height: 0.96;
+  font-size: clamp(2.25rem, 4.8vw, 3.15rem);
+  line-height: 0.98;
 }
 
 .capture-modal-close {
@@ -1473,7 +1554,7 @@ footer p {
 .capture-mode-switcher {
   display: inline-flex;
   gap: 0.25rem;
-  margin-top: 1.8rem;
+  margin-top: 1.15rem;
   padding: 0.3rem;
   border: 0;
   border-radius: 0.7rem;
@@ -1492,8 +1573,8 @@ footer p {
 }
 
 .capture-mode-button {
-  min-width: 5.5rem;
-  min-height: 2.55rem;
+  min-width: 5rem;
+  min-height: 2.4rem;
   border: 0;
   border-radius: 0.5rem;
   background: transparent;
@@ -1726,6 +1807,19 @@ footer p {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.plan-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.plan-archive-button {
+  border: 1px solid #d8d8cd;
+  cursor: pointer;
 }
 
 .review-heading h1 {
@@ -2064,6 +2158,73 @@ footer p {
   margin-bottom: 1rem;
 }
 
+.plan-archive-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background: rgb(24 60 54 / 52%);
+  backdrop-filter: blur(0.35rem);
+}
+
+.plan-archive-backdrop-dismiss {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.plan-archive-dialog {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: min(100%, 32rem);
+  gap: 1rem;
+  padding: clamp(1.7rem, 5vw, 2.5rem);
+  border: 1px solid rgb(35 70 63 / 12%);
+  border-radius: 1.25rem;
+  background: #fffdfa;
+  box-shadow: 0 1.5rem 4rem rgb(25 64 56 / 20%);
+}
+
+.plan-archive-dialog h2 {
+  color: #183c36;
+  font-size: clamp(2rem, 5vw, 2.8rem);
+  line-height: 0.98;
+}
+
+.plan-archive-dialog > p:not(.workspace-empty-kicker, .plan-archive-error) {
+  color: #61746f;
+  line-height: 1.55;
+}
+
+.plan-archive-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.7rem;
+  margin-top: 0.35rem;
+}
+
+.plan-archive-actions .button {
+  border: 1px solid #d8d8cd;
+  cursor: pointer;
+}
+
+.plan-archive-actions .button-primary {
+  border-color: #d16043;
+}
+
+.plan-archive-actions .button:disabled,
+.today-archive-list .button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+  transform: none;
+}
+
 @media (max-width: 800px) {
   .capture-launcher {
     grid-template-columns: 1fr;
@@ -2118,5 +2279,24 @@ footer p {
   .plan-step-status,
   .plan-step-actions {
     justify-items: start;
+  }
+
+  .plan-heading-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 540px) {
+  .today-archive-list li {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .plan-archive-backdrop {
+    padding: 1rem;
+  }
+
+  .plan-archive-actions .button {
+    flex: 1 1 10rem;
   }
 }

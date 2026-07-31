@@ -46,6 +46,7 @@ impl InboxStatus {
             (Self::Captured, Self::Reviewing)
                 | (Self::Reviewing, Self::Planned)
                 | (Self::Planned, Self::Archived)
+                | (Self::Archived, Self::Planned)
         )
     }
 }
@@ -127,6 +128,7 @@ mod tests {
         assert!(InboxStatus::Captured.can_transition_to(InboxStatus::Reviewing));
         assert!(InboxStatus::Reviewing.can_transition_to(InboxStatus::Planned));
         assert!(InboxStatus::Planned.can_transition_to(InboxStatus::Archived));
+        assert!(InboxStatus::Archived.can_transition_to(InboxStatus::Planned));
         assert!(!InboxStatus::Captured.can_transition_to(InboxStatus::Planned));
         assert!(!InboxStatus::Captured.can_transition_to(InboxStatus::Archived));
         assert!(!InboxStatus::Reviewing.can_transition_to(InboxStatus::Archived));

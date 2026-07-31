@@ -14,7 +14,8 @@ use ai::{AiCall, AiError, AiProvider, Extraction};
 use async_trait::async_trait;
 use domain::PlanStatus;
 use inbox::{
-    InboxRepository, NewPlan, PlanStepUpdate, SqlxInboxRepository, Suggestion, UpdatePlanStepResult,
+    ArchivePlanResult, InboxRepository, NewPlan, PlanStepUpdate, SqlxInboxRepository, Suggestion,
+    UpdatePlanStepResult,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -329,7 +330,7 @@ async fn sqlx_repository_lists_only_owned_plans_with_ordered_steps() {
     .expect("test Plan steps should insert");
 
     let listed = repository
-        .list_plans(&owner_uid)
+        .list_plans(&owner_uid, false)
         .await
         .expect("owner Plan list should succeed");
     assert_eq!(
@@ -351,7 +352,7 @@ async fn sqlx_repository_lists_only_owned_plans_with_ordered_steps() {
     );
 
     let other_owner_plans = repository
-        .list_plans(&other_owner_uid)
+        .list_plans(&other_owner_uid, false)
         .await
         .expect("other owner Plan list should succeed");
     assert_eq!(
@@ -369,6 +370,194 @@ async fn sqlx_repository_lists_only_owned_plans_with_ordered_steps() {
         .expect("test Plans should clean up");
     sqlx::query("DELETE FROM inbox_items WHERE id = ANY($1)")
         .bind(vec![older_item_id, newer_item_id, foreign_item_id])
+        .execute(&database)
+        .await
+        .expect("test Inbox items should clean up");
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL for an isolated PostgreSQL database"]
+async fn sqlx_repository_archives_only_owned_plan_pairs_and_restores_their_state() {
+    let database = test_database().await;
+    let repository = SqlxInboxRepository::new(database.clone());
+    let owner_uid = format!("plan-archive-owner-{}", Uuid::new_v4());
+    let other_owner_uid = format!("plan-archive-other-{}", Uuid::new_v4());
+    let active_item_id = Uuid::new_v4();
+    let archived_item_id = Uuid::new_v4();
+    let foreign_item_id = Uuid::new_v4();
+    let active_plan_id = Uuid::new_v4();
+    let archived_plan_id = Uuid::new_v4();
+    let foreign_plan_id = Uuid::new_v4();
+    let archived_step_id = Uuid::new_v4();
+
+    sqlx::query(
+        r#"
+        INSERT INTO inbox_items (id, owner_uid, source_type, original_text, status)
+        VALUES
+            ($1, $2, 'text', 'Keep active', 'planned'),
+            ($3, $2, 'text', 'Archive me', 'planned'),
+            ($4, $5, 'text', 'Another persons Plan', 'planned')
+        "#,
+    )
+    .bind(active_item_id)
+    .bind(&owner_uid)
+    .bind(archived_item_id)
+    .bind(foreign_item_id)
+    .bind(&other_owner_uid)
+    .execute(&database)
+    .await
+    .expect("test Inbox items should insert");
+    sqlx::query(
+        r#"
+        INSERT INTO plans (id, inbox_item_id, summary, status, created_at, updated_at)
+        VALUES
+            ($1, $2, 'Keep active', 'ready', '2026-01-03T00:00:00Z', '2026-01-03T00:00:00Z'),
+            ($3, $4, 'Archive me', 'waiting', '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
+            ($5, $6, 'Another persons Plan', 'ready', '2026-01-04T00:00:00Z', '2026-01-04T00:00:00Z')
+        "#,
+    )
+    .bind(active_plan_id)
+    .bind(active_item_id)
+    .bind(archived_plan_id)
+    .bind(archived_item_id)
+    .bind(foreign_plan_id)
+    .bind(foreign_item_id)
+    .execute(&database)
+    .await
+    .expect("test Plans should insert");
+    sqlx::query(
+        r#"
+        INSERT INTO plan_steps (id, plan_id, position, title, rationale, status, waiting_on, is_next_action)
+        VALUES
+            ($1, $2, 0, 'Keep active step', 'Keeps the active Plan complete.', 'ready', NULL, true),
+            ($3, $4, 0, 'Wait for reply', 'Keeps the archived Plan state.', 'waiting', 'A reply from the agency', false),
+            ($5, $6, 0, 'Foreign step', 'Must remain private.', 'ready', NULL, true)
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(active_plan_id)
+    .bind(archived_step_id)
+    .bind(archived_plan_id)
+    .bind(Uuid::new_v4())
+    .bind(foreign_plan_id)
+    .execute(&database)
+    .await
+    .expect("test Plan steps should insert");
+
+    assert_eq!(
+        repository
+            .archive_plan(&other_owner_uid, archived_plan_id)
+            .await
+            .expect("foreign archive should complete safely"),
+        ArchivePlanResult::NotFound
+    );
+    assert_eq!(
+        repository
+            .archive_plan(&owner_uid, archived_plan_id)
+            .await
+            .expect("owned Plan should archive"),
+        ArchivePlanResult::Updated
+    );
+    assert_eq!(
+        repository
+            .archive_plan(&owner_uid, archived_plan_id)
+            .await
+            .expect("repeat archive should complete safely"),
+        ArchivePlanResult::InvalidState
+    );
+
+    let active_plans = repository
+        .list_plans(&owner_uid, false)
+        .await
+        .expect("active Plans should list");
+    assert_eq!(
+        active_plans.iter().map(|plan| plan.id).collect::<Vec<_>>(),
+        [active_plan_id]
+    );
+    let archived_plans = repository
+        .list_plans(&owner_uid, true)
+        .await
+        .expect("archived Plans should list");
+    assert_eq!(
+        archived_plans
+            .iter()
+            .map(|plan| plan.id)
+            .collect::<Vec<_>>(),
+        [archived_plan_id]
+    );
+    assert_eq!(
+        archived_plans[0].steps[0].waiting_on.as_deref(),
+        Some("A reply from the agency")
+    );
+    assert!(
+        repository
+            .get_plan(&owner_uid, archived_plan_id)
+            .await
+            .expect("archived Plan lookup should succeed")
+            .is_none()
+    );
+    assert!(matches!(
+        repository
+            .update_plan_step(
+                &owner_uid,
+                archived_plan_id,
+                archived_step_id,
+                &PlanStepUpdate {
+                    status: PlanStatus::Complete,
+                    waiting_on: None,
+                },
+            )
+            .await
+            .expect("archived step update should complete safely"),
+        UpdatePlanStepResult::NotFound
+    ));
+
+    assert_eq!(
+        repository
+            .restore_plan(&owner_uid, archived_plan_id)
+            .await
+            .expect("owned Plan should restore"),
+        ArchivePlanResult::Updated
+    );
+    let restored = repository
+        .get_plan(&owner_uid, archived_plan_id)
+        .await
+        .expect("restored Plan lookup should succeed")
+        .expect("restored Plan should be visible");
+    assert_eq!(restored.status, PlanStatus::Waiting);
+    assert_eq!(
+        restored.steps[0].waiting_on.as_deref(),
+        Some("A reply from the agency")
+    );
+    assert_eq!(
+        repository
+            .list_plans(&owner_uid, false)
+            .await
+            .expect("restored Plans should list in activity order")
+            .iter()
+            .map(|plan| plan.id)
+            .collect::<Vec<_>>(),
+        [archived_plan_id, active_plan_id]
+    );
+    assert_eq!(
+        repository
+            .list(&owner_uid)
+            .await
+            .expect("Inbox should list restored source capture")
+            .iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>()
+            .len(),
+        2
+    );
+
+    sqlx::query("DELETE FROM plans WHERE inbox_item_id = ANY($1)")
+        .bind(vec![active_item_id, archived_item_id, foreign_item_id])
+        .execute(&database)
+        .await
+        .expect("test Plans should clean up");
+    sqlx::query("DELETE FROM inbox_items WHERE id = ANY($1)")
+        .bind(vec![active_item_id, archived_item_id, foreign_item_id])
         .execute(&database)
         .await
         .expect("test Inbox items should clean up");

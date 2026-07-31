@@ -4,8 +4,8 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{
-        DefaultBodyLimit, FromRequest, Multipart, Path, Request, State, multipart::MultipartError,
-        rejection::JsonRejection,
+        DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State,
+        multipart::MultipartError, rejection::JsonRejection,
     },
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
@@ -25,8 +25,8 @@ use crate::{
     auth::{AuthenticatedUser, TokenVerifier},
     domain::{CaptureSourceType, InboxStatus, PlanStatus},
     inbox::{
-        FileCapture, InboxItem, InboxItemDetail, InboxRepository, NewSuggestion, Plan, PlanStep,
-        PlanStepUpdate, Suggestion, SuggestionKind, UpdatePlanStepResult,
+        ArchivePlanResult, FileCapture, InboxItem, InboxItemDetail, InboxRepository, NewSuggestion,
+        Plan, PlanStep, PlanStepUpdate, Suggestion, SuggestionKind, UpdatePlanStepResult,
     },
     storage::PrivateObjectStore,
 };
@@ -70,6 +70,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/inbox-items/{item_id}/plans", post(create_plan))
         .route("/api/v1/plans", get(list_plans))
         .route("/api/v1/plans/{plan_id}", get(get_plan))
+        .route("/api/v1/plans/{plan_id}/archive", post(archive_plan))
+        .route("/api/v1/plans/{plan_id}/restore", post(restore_plan))
         .route(
             "/api/v1/plans/{plan_id}/steps/{step_id}",
             patch(update_plan_step),
@@ -503,15 +505,79 @@ async fn get_plan(
     }
 }
 
-async fn list_plans(State(state): State<AppState>, headers: HeaderMap) -> Response {
+async fn list_plans(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ListPlansQuery>,
+) -> Response {
     let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
         return unauthenticated_response();
     };
-    match state.inbox_repository.list_plans(&user.uid).await {
+    match state
+        .inbox_repository
+        .list_plans(&user.uid, query.archived.unwrap_or(false))
+        .await
+    {
         Ok(plans) => (StatusCode::OK, Json(PlansResponse::from(plans))).into_response(),
         Err(error) => {
             tracing::error!(%error, "could not list Plans");
             internal_error_response("Could not load Plans.")
+        }
+    }
+}
+
+async fn archive_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<String>,
+) -> Response {
+    transition_plan_archive_state(&state, &headers, plan_id, true).await
+}
+
+async fn restore_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<String>,
+) -> Response {
+    transition_plan_archive_state(&state, &headers, plan_id, false).await
+}
+
+async fn transition_plan_archive_state(
+    state: &AppState,
+    headers: &HeaderMap,
+    plan_id: String,
+    archive: bool,
+) -> Response {
+    let Ok(user) = authenticated_user(headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    let Ok(plan_id) = Uuid::parse_str(&plan_id) else {
+        return plan_id_validation_error_response();
+    };
+    let result = if archive {
+        state
+            .inbox_repository
+            .archive_plan(&user.uid, plan_id)
+            .await
+    } else {
+        state
+            .inbox_repository
+            .restore_plan(&user.uid, plan_id)
+            .await
+    };
+    match result {
+        Ok(ArchivePlanResult::Updated) => StatusCode::NO_CONTENT.into_response(),
+        Ok(ArchivePlanResult::NotFound) => {
+            api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Plan not found.")
+        }
+        Ok(ArchivePlanResult::InvalidState) => invalid_state_response(if archive {
+            "This Plan cannot be archived right now."
+        } else {
+            "This Plan cannot be restored right now."
+        }),
+        Err(error) => {
+            tracing::error!(%error, action = if archive { "archive" } else { "restore" }, "could not change Plan archive state");
+            internal_error_response("Could not update this Plan.")
         }
     }
 }
@@ -917,6 +983,11 @@ struct UpdatePlanStepRequest {
     waiting_on: Value,
 }
 
+#[derive(Deserialize)]
+struct ListPlansQuery {
+    archived: Option<bool>,
+}
+
 impl TryFrom<UpdatePlanStepRequest> for PlanStepUpdate {
     type Error = ();
 
@@ -1190,8 +1261,8 @@ mod tests {
             highlighted_next_action,
         },
         inbox::{
-            FileCapture, InboxItem, InboxItemDetail, InboxRepository, NewPlan, NewPlanStep,
-            NewSuggestion, Plan, PlanStep, PlanStepUpdate, Suggestion, SuggestionKind,
+            ArchivePlanResult, FileCapture, InboxItem, InboxItemDetail, InboxRepository, NewPlan,
+            NewPlanStep, NewSuggestion, Plan, PlanStep, PlanStepUpdate, Suggestion, SuggestionKind,
             UpdatePlanStepResult,
         },
         storage::PrivateObjectStore,
@@ -1272,10 +1343,39 @@ mod tests {
         }
 
         fn insert_plan(&self, owner_uid: &str, plan: Plan) {
+            let inbox_item_id = plan.inbox_item_id;
+            let plan_id = plan.id;
+            let created_at = plan.created_at;
+            let updated_at = plan.updated_at;
+            let summary = plan.summary.clone();
             self.plans
                 .lock()
                 .unwrap()
-                .insert(plan.id, (owner_uid.to_owned(), plan));
+                .insert(plan_id, (owner_uid.to_owned(), plan));
+            self.items
+                .lock()
+                .unwrap()
+                .entry(inbox_item_id)
+                .or_insert_with(|| {
+                    (
+                        owner_uid.to_owned(),
+                        InboxItemDetail {
+                            item: InboxItem {
+                                id: inbox_item_id,
+                                plan_id: Some(plan_id),
+                                source_type: CaptureSourceType::Text,
+                                status: InboxStatus::Planned,
+                                created_at,
+                                updated_at,
+                            },
+                            original_text: Some(summary),
+                            original_filename: None,
+                            content_type: None,
+                            byte_size: None,
+                            suggestions: Vec::new(),
+                        },
+                    )
+                });
         }
     }
 
@@ -1318,7 +1418,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .filter(|(owner, _)| owner == owner_uid)
+                .filter(|(owner, detail)| {
+                    owner == owner_uid && detail.item.status != InboxStatus::Archived
+                })
                 .map(|(_, detail)| detail.item.clone())
                 .collect())
         }
@@ -1333,7 +1435,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .get(&item_id)
-                .filter(|(owner, _)| owner == owner_uid)
+                .filter(|(owner, detail)| {
+                    owner == owner_uid && detail.item.status != InboxStatus::Archived
+                })
                 .map(|(_, detail)| detail.clone()))
         }
 
@@ -1348,7 +1452,9 @@ mod tests {
                 .unwrap()
                 .get(&item_id)
                 .filter(|(owner, detail)| {
-                    owner == owner_uid && detail.item.source_type == CaptureSourceType::Pdf
+                    owner == owner_uid
+                        && detail.item.status != InboxStatus::Archived
+                        && detail.item.source_type == CaptureSourceType::Pdf
                 })
                 .map(|_| crate::inbox::FileReference {
                     storage_key: "private-object-key".to_owned(),
@@ -1458,16 +1564,28 @@ mod tests {
         }
 
         async fn get_plan(&self, owner_uid: &str, plan_id: Uuid) -> anyhow::Result<Option<Plan>> {
-            Ok(self
+            let plan = self
                 .plans
                 .lock()
                 .unwrap()
                 .get(&plan_id)
                 .filter(|(owner, _)| owner == owner_uid)
-                .map(|(_, plan)| plan.clone()))
+                .map(|(_, plan)| plan.clone());
+            let Some(plan) = plan else {
+                return Ok(None);
+            };
+            let is_active = self
+                .items
+                .lock()
+                .unwrap()
+                .get(&plan.inbox_item_id)
+                .is_some_and(|(owner, detail)| {
+                    owner == owner_uid && detail.item.status == InboxStatus::Planned
+                });
+            Ok(is_active.then_some(plan))
         }
 
-        async fn list_plans(&self, owner_uid: &str) -> anyhow::Result<Vec<Plan>> {
+        async fn list_plans(&self, owner_uid: &str, archived: bool) -> anyhow::Result<Vec<Plan>> {
             let mut plans = self
                 .plans
                 .lock()
@@ -1476,6 +1594,19 @@ mod tests {
                 .filter(|(owner, _)| owner == owner_uid)
                 .map(|(_, plan)| plan.clone())
                 .collect::<Vec<_>>();
+            let status = if archived {
+                InboxStatus::Archived
+            } else {
+                InboxStatus::Planned
+            };
+            let items = self.items.lock().unwrap();
+            plans.retain(|plan| {
+                items
+                    .get(&plan.inbox_item_id)
+                    .is_some_and(|(owner, detail)| {
+                        owner == owner_uid && detail.item.status == status
+                    })
+            });
             plans.sort_by(|left, right| {
                 right
                     .updated_at
@@ -1483,6 +1614,68 @@ mod tests {
                     .then_with(|| right.id.cmp(&left.id))
             });
             Ok(plans)
+        }
+
+        async fn archive_plan(
+            &self,
+            owner_uid: &str,
+            plan_id: Uuid,
+        ) -> anyhow::Result<ArchivePlanResult> {
+            let inbox_item_id = match self.plans.lock().unwrap().get(&plan_id) {
+                Some((owner, plan)) if owner == owner_uid => plan.inbox_item_id,
+                _ => return Ok(ArchivePlanResult::NotFound),
+            };
+            {
+                let mut items = self.items.lock().unwrap();
+                let Some((owner, detail)) = items.get_mut(&inbox_item_id) else {
+                    return Ok(ArchivePlanResult::NotFound);
+                };
+                if owner != owner_uid {
+                    return Ok(ArchivePlanResult::NotFound);
+                }
+                if detail.item.status != InboxStatus::Planned {
+                    return Ok(ArchivePlanResult::InvalidState);
+                }
+                detail.item.status = InboxStatus::Archived;
+                detail.item.updated_at = OffsetDateTime::now_utc();
+            }
+            let mut plans = self.plans.lock().unwrap();
+            let Some((_, plan)) = plans.get_mut(&plan_id) else {
+                return Ok(ArchivePlanResult::NotFound);
+            };
+            plan.updated_at = OffsetDateTime::now_utc();
+            Ok(ArchivePlanResult::Updated)
+        }
+
+        async fn restore_plan(
+            &self,
+            owner_uid: &str,
+            plan_id: Uuid,
+        ) -> anyhow::Result<ArchivePlanResult> {
+            let inbox_item_id = match self.plans.lock().unwrap().get(&plan_id) {
+                Some((owner, plan)) if owner == owner_uid => plan.inbox_item_id,
+                _ => return Ok(ArchivePlanResult::NotFound),
+            };
+            {
+                let mut items = self.items.lock().unwrap();
+                let Some((owner, detail)) = items.get_mut(&inbox_item_id) else {
+                    return Ok(ArchivePlanResult::NotFound);
+                };
+                if owner != owner_uid {
+                    return Ok(ArchivePlanResult::NotFound);
+                }
+                if detail.item.status != InboxStatus::Archived {
+                    return Ok(ArchivePlanResult::InvalidState);
+                }
+                detail.item.status = InboxStatus::Planned;
+                detail.item.updated_at = OffsetDateTime::now_utc();
+            }
+            let mut plans = self.plans.lock().unwrap();
+            let Some((_, plan)) = plans.get_mut(&plan_id) else {
+                return Ok(ArchivePlanResult::NotFound);
+            };
+            plan.updated_at = OffsetDateTime::now_utc();
+            Ok(ArchivePlanResult::Updated)
         }
 
         async fn update_plan_step(
@@ -1497,6 +1690,17 @@ mod tests {
                 return Ok(UpdatePlanStepResult::NotFound);
             };
             if owner != owner_uid {
+                return Ok(UpdatePlanStepResult::NotFound);
+            }
+            let is_active = self
+                .items
+                .lock()
+                .unwrap()
+                .get(&plan.inbox_item_id)
+                .is_some_and(|(owner, detail)| {
+                    owner == owner_uid && detail.item.status == InboxStatus::Planned
+                });
+            if !is_active {
                 return Ok(UpdatePlanStepResult::NotFound);
             }
             let Some(step) = plan.steps.iter_mut().find(|step| step.id == step_id) else {
@@ -2127,6 +2331,274 @@ mod tests {
             response_json(foreign).await["plans"][0]["id"],
             foreign_plan_id.to_string()
         );
+    }
+
+    #[tokio::test]
+    async fn plan_archiving_is_owner_scoped_reversible_and_hides_the_pair() {
+        let plan_id = Uuid::new_v4();
+        let inbox_item_id = Uuid::new_v4();
+        let step_id = Uuid::new_v4();
+        let active_plan_id = Uuid::new_v4();
+        let active_inbox_item_id = Uuid::new_v4();
+        let repository = Arc::new(WorkflowInboxRepository::default());
+        repository.insert_plan(
+            "user-123",
+            Plan {
+                id: plan_id,
+                inbox_item_id,
+                summary: "Renew before travelling.".to_owned(),
+                status: PlanStatus::Waiting,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+                steps: vec![PlanStep {
+                    waiting_on: Some("A reply from the agency".to_owned()),
+                    ..plan_step(step_id, 0, PlanStatus::Waiting, false)
+                }],
+            },
+        );
+        repository.insert_plan(
+            "user-123",
+            Plan {
+                id: active_plan_id,
+                inbox_item_id: active_inbox_item_id,
+                summary: "An older active Plan.".to_owned(),
+                status: PlanStatus::Ready,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::from_unix_timestamp(1).unwrap(),
+                steps: vec![plan_step(Uuid::new_v4(), 0, PlanStatus::Ready, true)],
+            },
+        );
+        let app = workflow_app(repository.clone(), Arc::new(DisabledAiProvider));
+
+        let unauthenticated = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/plans/{plan_id}/archive"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let invalid_id = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/plans/not-a-uuid/archive")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(invalid_id.status(), StatusCode::BAD_REQUEST);
+
+        let foreign = app
+            .clone()
+            .oneshot(other_user(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/plans/{plan_id}/archive"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+
+        let archived = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/plans/{plan_id}/archive"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(archived.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            repository.detail(inbox_item_id).item.status,
+            InboxStatus::Archived
+        );
+
+        let active = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri("/api/v1/plans")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(active).await["plans"][0]["id"],
+            active_plan_id.to_string()
+        );
+        let active_inbox = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri("/api/v1/inbox-items")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(active_inbox).await["inboxItems"][0]["id"],
+            active_inbox_item_id.to_string()
+        );
+
+        let archived_list = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri("/api/v1/plans?archived=true")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        let archived_list = response_json(archived_list).await;
+        assert_eq!(archived_list["plans"][0]["id"], plan_id.to_string());
+        assert_eq!(archived_list["plans"][0]["status"], "waiting");
+        assert_eq!(
+            archived_list["plans"][0]["steps"][0]["waitingOn"],
+            "A reply from the agency"
+        );
+
+        let hidden_plan = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri(format!("/api/v1/plans/{plan_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(hidden_plan.status(), StatusCode::NOT_FOUND);
+        let hidden_capture = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri(format!("/api/v1/inbox-items/{inbox_item_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(hidden_capture.status(), StatusCode::NOT_FOUND);
+        let hidden_step = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(hidden_step.status(), StatusCode::NOT_FOUND);
+
+        let already_archived = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/plans/{plan_id}/archive"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(already_archived.status(), StatusCode::CONFLICT);
+
+        let restored = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/plans/{plan_id}/restore"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(restored.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            repository.detail(inbox_item_id).item.status,
+            InboxStatus::Planned
+        );
+
+        let restored_plan = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri(format!("/api/v1/plans/{plan_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        let restored_plan = response_json(restored_plan).await;
+        assert_eq!(restored_plan["plan"]["status"], "waiting");
+        assert_eq!(
+            restored_plan["plan"]["steps"][0]["waitingOn"],
+            "A reply from the agency"
+        );
+
+        let archived_after_restore = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri("/api/v1/plans?archived=true")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(archived_after_restore).await["plans"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let restored_list = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri("/api/v1/plans")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        let restored_list = response_json(restored_list).await;
+        assert_eq!(restored_list["plans"][0]["id"], plan_id.to_string());
+        assert_eq!(restored_list["plans"][1]["id"], active_plan_id.to_string());
+
+        let already_restored = app
+            .oneshot(valid(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/plans/{plan_id}/restore"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(already_restored.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]

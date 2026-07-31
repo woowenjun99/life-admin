@@ -271,8 +271,12 @@ export async function fetchPlan(
   return parsePlan(await response.json());
 }
 
-export async function fetchPlans(user: IdTokenSource): Promise<Plan[]> {
-  const response = await fetch("/api/v1/plans", {
+export async function fetchPlans(
+  user: IdTokenSource,
+  options: { archived?: boolean } = {},
+): Promise<Plan[]> {
+  const search = options.archived ? "?archived=true" : "";
+  const response = await fetch(`/api/v1/plans${search}`, {
     cache: "no-store",
     headers: await authorizationHeaders(user),
   });
@@ -280,6 +284,37 @@ export async function fetchPlans(user: IdTokenSource): Promise<Plan[]> {
     throw await responseError(response, "We could not load your Plans.");
   }
   return parsePlans(await response.json());
+}
+
+export async function archivePlan(
+  user: IdTokenSource,
+  planId: string,
+): Promise<void> {
+  return changePlanArchiveState(user, planId, "archive");
+}
+
+export async function restorePlan(
+  user: IdTokenSource,
+  planId: string,
+): Promise<void> {
+  return changePlanArchiveState(user, planId, "restore");
+}
+
+async function changePlanArchiveState(
+  user: IdTokenSource,
+  planId: string,
+  action: "archive" | "restore",
+): Promise<void> {
+  const response = await fetch(`/api/v1/plans/${planId}/${action}`, {
+    method: "POST",
+    headers: await authorizationHeaders(user),
+  });
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      `We could not ${action} this Plan. Please try again.`,
+    );
+  }
 }
 
 export async function updatePlanStep(

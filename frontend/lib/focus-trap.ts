@@ -21,3 +21,10 @@ export function focusTrapTargetIndex(
 
   return null;
 }
+
+export function restoreFocusAfterDialogClose(
+  target: Pick<HTMLElement, "focus"> | null,
+  schedule: (callback: () => void) => unknown = requestAnimationFrame,
+): void {
+  schedule(() => target?.focus());
+}

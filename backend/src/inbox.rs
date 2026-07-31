@@ -147,6 +147,13 @@ pub enum UpdatePlanStepResult {
     InvalidState,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArchivePlanResult {
+    Updated,
+    NotFound,
+    InvalidState,
+}
+
 #[async_trait]
 pub trait InboxRepository: Send + Sync {
     async fn create_text(&self, owner_uid: &str, text: &str) -> anyhow::Result<InboxItem>;
@@ -197,8 +204,24 @@ pub trait InboxRepository: Send + Sync {
         anyhow::bail!("plan retrieval is not implemented")
     }
 
-    async fn list_plans(&self, _owner_uid: &str) -> anyhow::Result<Vec<Plan>> {
+    async fn list_plans(&self, _owner_uid: &str, _archived: bool) -> anyhow::Result<Vec<Plan>> {
         anyhow::bail!("plan listing is not implemented")
+    }
+
+    async fn archive_plan(
+        &self,
+        _owner_uid: &str,
+        _plan_id: Uuid,
+    ) -> anyhow::Result<ArchivePlanResult> {
+        anyhow::bail!("Plan archiving is not implemented")
+    }
+
+    async fn restore_plan(
+        &self,
+        _owner_uid: &str,
+        _plan_id: Uuid,
+    ) -> anyhow::Result<ArchivePlanResult> {
+        anyhow::bail!("Plan restoration is not implemented")
     }
 
     async fn update_plan_step(
@@ -289,6 +312,51 @@ impl SqlxInboxRepository {
             .await?;
         }
         Ok(())
+    }
+
+    async fn transition_plan_archive_state(
+        &self,
+        owner_uid: &str,
+        plan_id: Uuid,
+        expected: InboxStatus,
+        next: InboxStatus,
+    ) -> anyhow::Result<ArchivePlanResult> {
+        let mut transaction = self.database.begin().await?;
+        let source = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT i.id, i.status FROM inbox_items i INNER JOIN plans p ON p.inbox_item_id = i.id WHERE p.id = $1 AND i.owner_uid = $2 FOR UPDATE OF i",
+        )
+        .bind(plan_id)
+        .bind(owner_uid)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let Some((inbox_item_id, status)) = source else {
+            transaction.rollback().await?;
+            return Ok(ArchivePlanResult::NotFound);
+        };
+        let current = InboxStatus::parse(&status)
+            .ok_or_else(|| anyhow::anyhow!("Inbox item has an invalid status"))?;
+        if current != expected || !current.can_transition_to(next) {
+            transaction.rollback().await?;
+            return Ok(ArchivePlanResult::InvalidState);
+        }
+
+        sqlx::query("UPDATE inbox_items SET status = $1 WHERE id = $2")
+            .bind(match next {
+                InboxStatus::Planned => "planned",
+                InboxStatus::Archived => "archived",
+                InboxStatus::Captured | InboxStatus::Reviewing => {
+                    anyhow::bail!("Plans cannot transition to this Inbox status")
+                }
+            })
+            .bind(inbox_item_id)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("UPDATE plans SET updated_at = now() WHERE id = $1")
+            .bind(plan_id)
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(ArchivePlanResult::Updated)
     }
 }
 
@@ -472,7 +540,7 @@ impl InboxRepository for SqlxInboxRepository {
 
     async fn list(&self, owner_uid: &str) -> anyhow::Result<Vec<InboxItem>> {
         let rows = sqlx::query_as::<_, InboxItemRow>(
-            "SELECT i.id, p.id AS plan_id, i.source_type, i.status, i.created_at, i.updated_at FROM inbox_items i LEFT JOIN plans p ON p.inbox_item_id = i.id WHERE i.owner_uid = $1 ORDER BY i.created_at DESC, i.id DESC",
+            "SELECT i.id, p.id AS plan_id, i.source_type, i.status, i.created_at, i.updated_at FROM inbox_items i LEFT JOIN plans p ON p.inbox_item_id = i.id WHERE i.owner_uid = $1 AND i.status <> 'archived' ORDER BY i.created_at DESC, i.id DESC",
         )
         .bind(owner_uid)
         .fetch_all(&self.database)
@@ -482,7 +550,7 @@ impl InboxRepository for SqlxInboxRepository {
 
     async fn get(&self, owner_uid: &str, item_id: Uuid) -> anyhow::Result<Option<InboxItemDetail>> {
         let row = sqlx::query_as::<_, InboxItemDetailRow>(
-            "SELECT i.id, p.id AS plan_id, i.source_type, i.status, i.original_text, i.original_filename, i.content_type, i.byte_size, i.created_at, i.updated_at FROM inbox_items i LEFT JOIN plans p ON p.inbox_item_id = i.id WHERE i.id = $1 AND i.owner_uid = $2",
+            "SELECT i.id, p.id AS plan_id, i.source_type, i.status, i.original_text, i.original_filename, i.content_type, i.byte_size, i.created_at, i.updated_at FROM inbox_items i LEFT JOIN plans p ON p.inbox_item_id = i.id WHERE i.id = $1 AND i.owner_uid = $2 AND i.status <> 'archived'",
         )
         .bind(item_id)
         .bind(owner_uid)
@@ -500,7 +568,7 @@ impl InboxRepository for SqlxInboxRepository {
         item_id: Uuid,
     ) -> anyhow::Result<Option<FileReference>> {
         let row = sqlx::query_as::<_, (Option<String>, Option<String>)>(
-            "SELECT storage_key, content_type FROM inbox_items WHERE id = $1 AND owner_uid = $2 AND source_type = 'pdf'",
+            "SELECT storage_key, content_type FROM inbox_items WHERE id = $1 AND owner_uid = $2 AND source_type = 'pdf' AND status <> 'archived'",
         )
         .bind(item_id)
         .bind(owner_uid)
@@ -633,7 +701,7 @@ impl InboxRepository for SqlxInboxRepository {
 
     async fn get_plan(&self, owner_uid: &str, plan_id: Uuid) -> anyhow::Result<Option<Plan>> {
         let row = sqlx::query_as::<_, PlanRow>(
-            "SELECT p.id, p.inbox_item_id, p.summary, p.status, p.created_at, p.updated_at FROM plans p INNER JOIN inbox_items i ON i.id = p.inbox_item_id WHERE p.id = $1 AND i.owner_uid = $2",
+            "SELECT p.id, p.inbox_item_id, p.summary, p.status, p.created_at, p.updated_at FROM plans p INNER JOIN inbox_items i ON i.id = p.inbox_item_id WHERE p.id = $1 AND i.owner_uid = $2 AND i.status = 'planned'",
         )
         .bind(plan_id)
         .bind(owner_uid)
@@ -657,11 +725,12 @@ impl InboxRepository for SqlxInboxRepository {
         }))
     }
 
-    async fn list_plans(&self, owner_uid: &str) -> anyhow::Result<Vec<Plan>> {
+    async fn list_plans(&self, owner_uid: &str, archived: bool) -> anyhow::Result<Vec<Plan>> {
         let rows = sqlx::query_as::<_, PlanRow>(
-            "SELECT p.id, p.inbox_item_id, p.summary, p.status, p.created_at, p.updated_at FROM plans p INNER JOIN inbox_items i ON i.id = p.inbox_item_id WHERE i.owner_uid = $1 ORDER BY p.updated_at DESC, p.id DESC",
+            "SELECT p.id, p.inbox_item_id, p.summary, p.status, p.created_at, p.updated_at FROM plans p INNER JOIN inbox_items i ON i.id = p.inbox_item_id WHERE i.owner_uid = $1 AND i.status = $2 ORDER BY p.updated_at DESC, p.id DESC",
         )
         .bind(owner_uid)
+        .bind(if archived { "archived" } else { "planned" })
         .fetch_all(&self.database)
         .await?;
         let plan_ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
@@ -683,6 +752,34 @@ impl InboxRepository for SqlxInboxRepository {
             .collect()
     }
 
+    async fn archive_plan(
+        &self,
+        owner_uid: &str,
+        plan_id: Uuid,
+    ) -> anyhow::Result<ArchivePlanResult> {
+        self.transition_plan_archive_state(
+            owner_uid,
+            plan_id,
+            InboxStatus::Planned,
+            InboxStatus::Archived,
+        )
+        .await
+    }
+
+    async fn restore_plan(
+        &self,
+        owner_uid: &str,
+        plan_id: Uuid,
+    ) -> anyhow::Result<ArchivePlanResult> {
+        self.transition_plan_archive_state(
+            owner_uid,
+            plan_id,
+            InboxStatus::Archived,
+            InboxStatus::Planned,
+        )
+        .await
+    }
+
     async fn update_plan_step(
         &self,
         owner_uid: &str,
@@ -692,7 +789,7 @@ impl InboxRepository for SqlxInboxRepository {
     ) -> anyhow::Result<UpdatePlanStepResult> {
         let mut transaction = self.database.begin().await?;
         let owned_plan_id = sqlx::query_scalar::<_, Uuid>(
-            "SELECT p.id FROM plans p INNER JOIN inbox_items i ON i.id = p.inbox_item_id WHERE p.id = $1 AND i.owner_uid = $2 FOR UPDATE",
+            "SELECT p.id FROM plans p INNER JOIN inbox_items i ON i.id = p.inbox_item_id WHERE p.id = $1 AND i.owner_uid = $2 AND i.status = 'planned' FOR UPDATE",
         )
         .bind(plan_id)
         .bind(owner_uid)

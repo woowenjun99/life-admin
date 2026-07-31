@@ -76,8 +76,8 @@ archive/delete controls are intentionally not included.
 
 This repository contains two independent applications:
 
-- `backend/` — an Axum API with PostgreSQL via SQLx and Firebase Admin Auth.
-- `frontend/` — a Next.js App Router application with Firebase Web SDK, T3 Env, and Biome.
+- `backend/` — an Axum API with PostgreSQL via SQLx, Firebase Admin Auth, and Firebase Cloud Messaging.
+- `frontend/` — a Next.js App Router PWA with Firebase Web SDK, T3 Env, and Biome.
 
 ## Prerequisites
 
@@ -267,6 +267,34 @@ The backend image starts Axum as the non-root `app` user.
 
 The web SDK accepts only `NEXT_PUBLIC_FIREBASE_*` configuration values. Do not
 put a service-account credential or another server secret in `frontend/.env.local`.
+
+## PWA and Firebase Cloud Messaging
+
+Life Inbox is installable from a supported browser: its manifest opens the
+private Today workspace and its root service worker receives Firebase Cloud
+Messaging (FCM) data messages. On a signed-in workspace, select **Turn on
+alerts** and grant the browser permission. The app stores the resulting FCM
+Firebase Installation ID owner-scoped; the identifier is sent only to the
+authenticated backend and is never included in a URL or application response.
+
+To enable browser delivery in a deployed environment, enable Firebase Cloud
+Messaging for the Firebase project and add the public Web Push certificate key
+from Firebase Console to the frontend environment:
+
+```dotenv
+NEXT_PUBLIC_FIREBASE_VAPID_KEY=your-public-web-push-certificate-key
+```
+
+`FIREBASE_SERVICE_ACCOUNT_JSON` stays server-only. The backend uses that same
+service account to call FCM; do not create a browser-accessible server key.
+FCM has no local emulator, so local development remains installable but alert
+delivery is disabled when no service account is configured.
+
+Successful suggestion extraction and Plan generation each enqueue a generic
+FCM alert. The backend also checks active, non-complete Plan steps every minute
+and alerts once on their `due_on` date (UTC); a transient delivery failure is
+retried after five minutes. Lock-screen messages intentionally omit personal
+capture and Plan content.
 
 ## API proxy
 

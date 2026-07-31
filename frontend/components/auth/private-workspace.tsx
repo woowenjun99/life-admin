@@ -10,9 +10,15 @@ import {
   useEffect,
   useState,
 } from "react";
-
-import { ApiError, type CurrentUser, fetchCurrentUser } from "@/lib/api";
+import { NotificationSettings } from "@/components/pwa/notification-settings";
+import {
+  ApiError,
+  type CurrentUser,
+  fetchCurrentUser,
+  removeFcmRegistrationToken,
+} from "@/lib/api";
 import { firebaseAuth } from "@/lib/firebase/client";
+import { unregisterFcmInstallation } from "@/lib/firebase/messaging";
 
 import { useAuth } from "./auth-provider";
 
@@ -92,9 +98,18 @@ export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
   }, [isLoading, router, user]);
 
   async function handleSignOut() {
+    if (!user) return;
     setIsSigningOut(true);
 
     try {
+      const installationId = await unregisterFcmInstallation().catch(
+        () => null,
+      );
+      if (installationId) {
+        await removeFcmRegistrationToken(user, installationId).catch(
+          () => undefined,
+        );
+      }
       await signOut(firebaseAuth);
       router.replace("/");
     } catch {
@@ -137,6 +152,7 @@ export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
           <span>Life Inbox</span>
         </Link>
         <div className="workspace-nav-actions">
+          <NotificationSettings user={user} />
           <Link
             className="button button-small workspace-capture-link"
             href="/today?capture=text"

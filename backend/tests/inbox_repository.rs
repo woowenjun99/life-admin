@@ -7,6 +7,8 @@ mod domain;
 #[allow(dead_code)]
 #[path = "../src/inbox.rs"]
 mod inbox;
+#[path = "../src/notifications.rs"]
+mod notifications;
 
 use std::{collections::VecDeque, env, sync::Mutex};
 
@@ -17,7 +19,12 @@ use inbox::{
     ArchivePlanResult, InboxRepository, NewPlan, PlanStepUpdate, SqlxInboxRepository, Suggestion,
     UpdatePlanStepResult,
 };
+use notifications::{
+    FcmRegistrationToken, FcmTokenRegistrationLimitReached, MAX_FCM_REGISTRATION_TOKENS_PER_OWNER,
+    claim_due_notifications, save_fcm_registration_token,
+};
 use sqlx::{PgPool, postgres::PgPoolOptions};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 async fn test_database() -> PgPool {
@@ -35,6 +42,130 @@ async fn test_database() -> PgPool {
         .expect("inbox migrations should apply to the test database");
 
     database
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL for an isolated PostgreSQL database"]
+async fn fcm_token_registrations_are_capped_per_owner_without_blocking_refreshes() {
+    let database = test_database().await;
+    let owner_uid = format!("fcm-registration-owner-{}", Uuid::new_v4());
+    let first_token = FcmRegistrationToken("fcm-registration-token-0".to_owned());
+
+    for index in 0..MAX_FCM_REGISTRATION_TOKENS_PER_OWNER {
+        save_fcm_registration_token(
+            &database,
+            &owner_uid,
+            &FcmRegistrationToken(format!("fcm-registration-token-{index}")),
+        )
+        .await
+        .expect("owner registrations below the limit should save");
+    }
+    save_fcm_registration_token(&database, &owner_uid, &first_token)
+        .await
+        .expect("refreshing an existing owner registration should remain allowed");
+
+    let error = save_fcm_registration_token(
+        &database,
+        &owner_uid,
+        &FcmRegistrationToken("fcm-registration-token-over-limit".to_owned()),
+    )
+    .await
+    .expect_err("a new owner registration beyond the limit should fail");
+    assert!(
+        error
+            .downcast_ref::<FcmTokenRegistrationLimitReached>()
+            .is_some()
+    );
+
+    let registration_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM fcm_registration_tokens WHERE owner_uid = $1",
+    )
+    .bind(&owner_uid)
+    .fetch_one(&database)
+    .await
+    .expect("owner registration count should load");
+    assert_eq!(registration_count, MAX_FCM_REGISTRATION_TOKENS_PER_OWNER);
+
+    sqlx::query("DELETE FROM fcm_registration_tokens WHERE owner_uid = $1")
+        .bind(&owner_uid)
+        .execute(&database)
+        .await
+        .expect("test FCM registrations should clean up");
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL for an isolated PostgreSQL database"]
+async fn due_fcm_notifications_retry_a_pending_claim_after_utc_midnight() {
+    let database = test_database().await;
+    let owner_uid = format!("due-fcm-owner-{}", Uuid::new_v4());
+    let inbox_item_id = Uuid::new_v4();
+    let plan_id = Uuid::new_v4();
+    let plan_step_id = Uuid::new_v4();
+    let today = OffsetDateTime::now_utc().date();
+    let yesterday = today
+        .previous_day()
+        .expect("today should have a previous day");
+
+    sqlx::query(
+        r#"
+        INSERT INTO inbox_items (id, owner_uid, source_type, original_text, status)
+        VALUES ($1, $2, 'text', 'Prepare the documents.', 'planned')
+        "#,
+    )
+    .bind(inbox_item_id)
+    .bind(&owner_uid)
+    .execute(&database)
+    .await
+    .expect("test Inbox item should insert");
+    sqlx::query(
+        r#"
+        INSERT INTO plans (id, inbox_item_id, summary, status)
+        VALUES ($1, $2, 'Prepare the documents.', 'ready')
+        "#,
+    )
+    .bind(plan_id)
+    .bind(inbox_item_id)
+    .execute(&database)
+    .await
+    .expect("test Plan should insert");
+    sqlx::query(
+        r#"
+        INSERT INTO plan_steps (id, plan_id, position, title, rationale, status, due_on, is_next_action)
+        VALUES ($1, $2, 0, 'Prepare documents', 'Keeps the deadline on track.', 'ready', $3, true)
+        "#,
+    )
+    .bind(plan_step_id)
+    .bind(plan_id)
+    .bind(yesterday)
+    .execute(&database)
+    .await
+    .expect("test Plan step should insert");
+    sqlx::query(
+        r#"
+        INSERT INTO due_fcm_notification_claims
+            (plan_step_id, due_on, owner_uid, plan_id, claimed_at)
+        VALUES ($1, $2, $3, $4, now() - interval '6 minutes')
+        "#,
+    )
+    .bind(plan_step_id)
+    .bind(yesterday)
+    .bind(&owner_uid)
+    .bind(plan_id)
+    .execute(&database)
+    .await
+    .expect("failed due notification claim should insert");
+
+    let claims = claim_due_notifications(&database, today)
+        .await
+        .expect("pending due notification should be reclaimed after midnight");
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].plan_step_id, plan_step_id);
+
+    sqlx::query("DELETE FROM inbox_items WHERE id = $1")
+        .bind(inbox_item_id)
+        .execute(&database)
+        .await
+        .expect("test due notification fixture should clean up");
 }
 
 #[tokio::test]

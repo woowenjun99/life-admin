@@ -9,7 +9,7 @@ use axum::{
     },
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{get, patch, post, put},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -28,6 +28,7 @@ use crate::{
         ArchivePlanResult, FileCapture, InboxItem, InboxItemDetail, InboxRepository, NewSuggestion,
         Plan, PlanStep, PlanStepUpdate, Suggestion, SuggestionKind, UpdatePlanStepResult,
     },
+    notifications::{FcmRegistrationToken, FcmTokenRegistrationLimitReached, NotificationService},
     storage::PrivateObjectStore,
 };
 
@@ -44,6 +45,7 @@ pub struct AppState {
     pub token_verifier: Arc<dyn TokenVerifier>,
     pub object_store: Arc<dyn PrivateObjectStore>,
     pub ai_provider: Arc<dyn AiProvider>,
+    pub notifications: Arc<dyn NotificationService>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -72,6 +74,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/plans/{plan_id}", get(get_plan))
         .route("/api/v1/plans/{plan_id}/archive", post(archive_plan))
         .route("/api/v1/plans/{plan_id}/restore", post(restore_plan))
+        .route(
+            "/api/v1/fcm-registration-tokens",
+            put(save_fcm_registration_token).delete(remove_fcm_registration_token),
+        )
         .route(
             "/api/v1/plans/{plan_id}/steps/{step_id}",
             patch(update_plan_step),
@@ -239,17 +245,20 @@ async fn capture_response_after_extraction(
             .into_response(),
         CaptureSourceType::Text | CaptureSourceType::Pdf => {
             match extract_owned_item(state, owner_uid, item.id).await {
-                Ok(detail) => (
-                    StatusCode::CREATED,
-                    Json(CaptureResponse {
-                        inbox_item: InboxItemResponse::from_item(
-                            &detail.item,
-                            state.ai_provider.as_ref(),
-                        ),
-                        extraction: ExtractionState::Ready,
-                    }),
-                )
-                    .into_response(),
+                Ok(detail) => {
+                    notify_suggestions_ready(state, owner_uid, detail.item.id);
+                    (
+                        StatusCode::CREATED,
+                        Json(CaptureResponse {
+                            inbox_item: InboxItemResponse::from_item(
+                                &detail.item,
+                                state.ai_provider.as_ref(),
+                            ),
+                            extraction: ExtractionState::Ready,
+                        }),
+                    )
+                        .into_response()
+                }
                 Err(ExtractionError::Unsupported) => (
                     StatusCode::CREATED,
                     Json(CaptureResponse {
@@ -335,13 +344,19 @@ async fn extract_inbox_item(
         return inbox_item_id_validation_error_response();
     };
     match extract_owned_item(&state, &user.uid, item_id).await {
-        Ok(item) => (
-            StatusCode::OK,
-            Json(GetInboxItemResponse {
-                inbox_item: InboxItemDetailResponse::from_item(&item, state.ai_provider.as_ref()),
-            }),
-        )
-            .into_response(),
+        Ok(item) => {
+            notify_suggestions_ready(&state, &user.uid, item.item.id);
+            (
+                StatusCode::OK,
+                Json(GetInboxItemResponse {
+                    inbox_item: InboxItemDetailResponse::from_item(
+                        &item,
+                        state.ai_provider.as_ref(),
+                    ),
+                }),
+            )
+                .into_response()
+        }
         Err(error) => extraction_error_response(error),
     }
 }
@@ -475,11 +490,72 @@ async fn create_plan(
         .create_plan(&user.uid, item_id, &generated)
         .await
     {
-        Ok(Some(plan)) => (StatusCode::CREATED, Json(PlanResponse::from(&plan))).into_response(),
+        Ok(Some(plan)) => {
+            notify_plan_ready(&state, &user.uid, plan.id);
+            (StatusCode::CREATED, Json(PlanResponse::from(&plan))).into_response()
+        }
         Ok(None) => invalid_state_response("A plan can only be generated once after review."),
         Err(error) => {
             tracing::error!(%error, "could not persist approved plan");
             internal_error_response("Could not save the plan.")
+        }
+    }
+}
+
+async fn save_fcm_registration_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Result<Json<FcmRegistrationTokenRequest>, JsonRejection>,
+) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    let Ok(Json(request)) = request else {
+        return fcm_token_validation_error_response();
+    };
+    if !state.notifications.is_configured() {
+        return fcm_unavailable_response();
+    }
+    let token = FcmRegistrationToken(request.token);
+    if token.validate().is_err() {
+        return fcm_token_validation_error_response();
+    }
+    match state.notifications.save_token(&user.uid, &token).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error)
+            if error
+                .downcast_ref::<FcmTokenRegistrationLimitReached>()
+                .is_some() =>
+        {
+            fcm_registration_limit_response()
+        }
+        Err(error) => {
+            tracing::error!(%error, "could not save a Firebase Cloud Messaging token");
+            internal_error_response("Could not save notification settings.")
+        }
+    }
+}
+
+async fn remove_fcm_registration_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Result<Json<FcmRegistrationTokenRequest>, JsonRejection>,
+) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    let Ok(Json(request)) = request else {
+        return fcm_token_validation_error_response();
+    };
+    let token = FcmRegistrationToken(request.token);
+    if token.validate().is_err() {
+        return fcm_token_validation_error_response();
+    }
+    match state.notifications.remove_token(&user.uid, &token.0).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => {
+            tracing::error!("could not remove a Firebase Cloud Messaging token");
+            internal_error_response("Could not update notification settings.")
         }
     }
 }
@@ -718,6 +794,26 @@ async fn extract_with_single_retry(
     Err(AiError::Transient)
 }
 
+fn notify_suggestions_ready(state: &AppState, owner_uid: &str, item_id: Uuid) {
+    let notifications = state.notifications.clone();
+    let owner_uid = owner_uid.to_owned();
+    tokio::spawn(async move {
+        if let Err(error) = notifications.suggestions_ready(&owner_uid, item_id).await {
+            tracing::warn!(%error, "could not send a suggestions-ready Firebase notification");
+        }
+    });
+}
+
+fn notify_plan_ready(state: &AppState, owner_uid: &str, plan_id: Uuid) {
+    let notifications = state.notifications.clone();
+    let owner_uid = owner_uid.to_owned();
+    tokio::spawn(async move {
+        if let Err(error) = notifications.plan_ready(&owner_uid, plan_id).await {
+            tracing::warn!(%error, "could not send a plan-ready Firebase notification");
+        }
+    });
+}
+
 async fn authenticated_user(
     headers: &HeaderMap,
     verifier: &dyn TokenVerifier,
@@ -759,6 +855,30 @@ fn suggestion_validation_error_response() -> Response {
         StatusCode::BAD_REQUEST,
         "VALIDATION_ERROR",
         "Suggestions must contain valid kinds, non-empty content, and ISO calendar dates.",
+    )
+}
+
+fn fcm_token_validation_error_response() -> Response {
+    api_error_response(
+        StatusCode::BAD_REQUEST,
+        "VALIDATION_ERROR",
+        "Notification settings were invalid.",
+    )
+}
+
+fn fcm_unavailable_response() -> Response {
+    api_error_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "FCM_UNAVAILABLE",
+        "Notifications are not configured.",
+    )
+}
+
+fn fcm_registration_limit_response() -> Response {
+    api_error_response(
+        StatusCode::TOO_MANY_REQUESTS,
+        "FCM_REGISTRATION_LIMIT",
+        "This account has reached the alert-device limit.",
     )
 }
 
@@ -1023,6 +1143,11 @@ struct CaptureResponse {
     extraction: ExtractionState,
 }
 
+#[derive(Deserialize)]
+struct FcmRegistrationTokenRequest {
+    token: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ExtractionState {
@@ -1265,6 +1390,7 @@ mod tests {
             NewPlanStep, NewSuggestion, Plan, PlanStep, PlanStepUpdate, Suggestion, SuggestionKind,
             UpdatePlanStepResult,
         },
+        notifications::{FcmTokenRegistrationLimitReached, NotificationService},
         storage::PrivateObjectStore,
     };
 
@@ -1281,6 +1407,47 @@ mod tests {
                 uid: uid.to_owned(),
                 email: email.to_owned(),
             })
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingNotificationService {
+        events: Mutex<Vec<(&'static str, String, Uuid)>>,
+    }
+
+    #[async_trait]
+    impl NotificationService for RecordingNotificationService {
+        async fn suggestions_ready(&self, owner_uid: &str, item_id: Uuid) -> anyhow::Result<()> {
+            self.events
+                .lock()
+                .unwrap()
+                .push(("suggestions", owner_uid.to_owned(), item_id));
+            Ok(())
+        }
+
+        async fn plan_ready(&self, owner_uid: &str, plan_id: Uuid) -> anyhow::Result<()> {
+            self.events
+                .lock()
+                .unwrap()
+                .push(("plan", owner_uid.to_owned(), plan_id));
+            Ok(())
+        }
+    }
+
+    struct LimitedNotificationService;
+
+    #[async_trait]
+    impl NotificationService for LimitedNotificationService {
+        async fn save_token(
+            &self,
+            _owner_uid: &str,
+            _token: &crate::notifications::FcmRegistrationToken,
+        ) -> anyhow::Result<()> {
+            Err(FcmTokenRegistrationLimitReached.into())
+        }
+
+        fn is_configured(&self) -> bool {
+            true
         }
     }
 
@@ -1838,6 +2005,49 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn fcm_token_registration_requires_an_authenticated_configured_service() {
+        let response = test_app()
+            .oneshot(valid(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/fcm-registration-tokens")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"token":"fcm-token-123"}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let payload = response_json(response).await;
+        assert_eq!(payload["error"]["code"], "FCM_UNAVAILABLE");
+        assert!(!payload.to_string().contains("fcm-token-123"));
+    }
+
+    #[tokio::test]
+    async fn fcm_token_registration_reports_a_safe_owner_device_limit() {
+        let response = test_app_with_ai_and_notifications(
+            Arc::new(DisabledAiProvider),
+            Arc::new(LimitedNotificationService),
+        )
+        .oneshot(valid(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/fcm-registration-tokens")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"token":"fcm-token-123"}"#))
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let payload = response_json(response).await;
+        assert_eq!(payload["error"]["code"], "FCM_REGISTRATION_LIMIT");
+        assert!(!payload.to_string().contains("fcm-token-123"));
+    }
+
     #[test]
     fn chat_completions_marks_pdf_captures_as_not_retryable() {
         let provider = OpenAiProvider::new(
@@ -1886,6 +2096,16 @@ mod tests {
     }
 
     fn test_app_with_ai(ai_provider: Arc<dyn AiProvider>) -> Router {
+        test_app_with_ai_and_notifications(
+            ai_provider,
+            Arc::new(crate::notifications::DisabledFcmNotificationService),
+        )
+    }
+
+    fn test_app_with_ai_and_notifications(
+        ai_provider: Arc<dyn AiProvider>,
+        notifications: Arc<dyn NotificationService>,
+    ) -> Router {
         let database = PgPoolOptions::new()
             .acquire_timeout(Duration::from_millis(10))
             .connect_lazy("postgres://app:app@127.0.0.1:1/app")
@@ -1896,12 +2116,25 @@ mod tests {
             token_verifier: Arc::new(TestTokenVerifier),
             object_store: Arc::new(TestObjectStore::default()),
             ai_provider,
+            notifications,
         })
     }
 
     fn workflow_app(
         inbox_repository: Arc<WorkflowInboxRepository>,
         ai_provider: Arc<dyn AiProvider>,
+    ) -> Router {
+        workflow_app_with_notifications(
+            inbox_repository,
+            ai_provider,
+            Arc::new(crate::notifications::DisabledFcmNotificationService),
+        )
+    }
+
+    fn workflow_app_with_notifications(
+        inbox_repository: Arc<WorkflowInboxRepository>,
+        ai_provider: Arc<dyn AiProvider>,
+        notifications: Arc<dyn NotificationService>,
     ) -> Router {
         let database = PgPoolOptions::new()
             .acquire_timeout(Duration::from_millis(10))
@@ -1913,6 +2146,7 @@ mod tests {
             token_verifier: Arc::new(TestTokenVerifier),
             object_store: Arc::new(TestObjectStore::default()),
             ai_provider,
+            notifications,
         })
     }
 
@@ -2032,6 +2266,7 @@ mod tests {
     #[tokio::test]
     async fn automatic_extraction_retries_one_transient_failure_and_enters_review() {
         let repository = Arc::new(WorkflowInboxRepository::default());
+        let notifications = Arc::new(RecordingNotificationService::default());
         let provider = Arc::new(SequenceExtractionProvider::new(vec![
             Err(AiError::Transient),
             Ok(Extraction {
@@ -2042,17 +2277,21 @@ mod tests {
                 }],
             }),
         ]));
-        let response = workflow_app(repository.clone(), provider.clone())
-            .oneshot(valid(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/inbox-items")
-                    .header("content-type", "application/json")
-                    .body(Body::from(r#"{"text":"Renew passport before my trip"}"#))
-                    .unwrap(),
-            ))
-            .await
-            .unwrap();
+        let response = workflow_app_with_notifications(
+            repository.clone(),
+            provider.clone(),
+            notifications.clone(),
+        )
+        .oneshot(valid(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/inbox-items")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"text":"Renew passport before my trip"}"#))
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
         let payload = response_json(response).await;
@@ -2062,6 +2301,13 @@ mod tests {
         let saved = repository.detail(item_id);
         assert_eq!(saved.item.status, InboxStatus::Reviewing);
         assert_eq!(saved.suggestions.len(), 1);
+        for _ in 0..3 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            *notifications.events.lock().unwrap(),
+            vec![("suggestions", "user-123".to_owned(), item_id)]
+        );
     }
 
     #[tokio::test]
@@ -2170,7 +2416,12 @@ mod tests {
             },
         );
         let provider = Arc::new(PlanningProvider::default());
-        let app = workflow_app(repository.clone(), provider.clone());
+        let notifications = Arc::new(RecordingNotificationService::default());
+        let app = workflow_app_with_notifications(
+            repository.clone(),
+            provider.clone(),
+            notifications.clone(),
+        );
         let response = app
             .clone()
             .oneshot(valid(
@@ -2213,6 +2464,14 @@ mod tests {
         assert_eq!(repository.detail(item_id).item.status, InboxStatus::Planned);
 
         let plan_id = plan["plan"]["id"].as_str().unwrap();
+        let plan_id_uuid = Uuid::parse_str(plan_id).unwrap();
+        for _ in 0..3 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            *notifications.events.lock().unwrap(),
+            vec![("plan", "user-123".to_owned(), plan_id_uuid)]
+        );
         let planned_item_response = app
             .oneshot(valid(
                 Request::builder()

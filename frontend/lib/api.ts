@@ -336,6 +336,44 @@ export async function updatePlanStep(
   return parsePlan(await response.json());
 }
 
+export async function saveFcmRegistrationToken(
+  user: IdTokenSource,
+  token: string,
+): Promise<void> {
+  const response = await fetch("/api/v1/fcm-registration-tokens", {
+    method: "PUT",
+    headers: await authorizationHeaders(user, {
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      "We could not save notification settings.",
+    );
+  }
+}
+
+export async function removeFcmRegistrationToken(
+  user: IdTokenSource,
+  token: string,
+): Promise<void> {
+  const response = await fetch("/api/v1/fcm-registration-tokens", {
+    method: "DELETE",
+    headers: await authorizationHeaders(user, {
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      "We could not update notification settings.",
+    );
+  }
+}
+
 export function validateCaptureFile(
   file: Pick<File, "size" | "type">,
 ): string | null {

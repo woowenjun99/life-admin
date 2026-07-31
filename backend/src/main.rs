@@ -7,6 +7,7 @@ mod domain;
 mod firebase;
 mod inbox;
 mod jwt;
+mod notifications;
 mod storage;
 
 use std::sync::Arc;
@@ -20,6 +21,10 @@ use app::{AppState, router};
 use auth::FirebaseTokenVerifier;
 use config::Config;
 use inbox::SqlxInboxRepository;
+use notifications::{
+    DisabledFcmNotificationService, FcmNotificationService, NotificationService,
+    spawn_due_notification_worker,
+};
 use storage::FirebaseStorage;
 
 #[tokio::main]
@@ -60,12 +65,26 @@ async fn main() -> Result<()> {
     };
     ensure_cleanup_queue_is_serviceable(&database, ai_provider.as_ref()).await?;
     spawn_cleanup_worker(database.clone(), ai_provider.clone());
+    let notifications: Arc<dyn NotificationService> =
+        match config.firebase_service_account_json.as_deref() {
+            Some(service_account_json) => Arc::new(
+                FcmNotificationService::new(
+                    database.clone(),
+                    &config.firebase_project_id,
+                    service_account_json,
+                )
+                .context("could not initialize Firebase Cloud Messaging")?,
+            ),
+            None => Arc::new(DisabledFcmNotificationService),
+        };
+    spawn_due_notification_worker(notifications.clone());
 
     let app = router(AppState {
         inbox_repository: Arc::new(SqlxInboxRepository::new(database.clone())),
         object_store,
         ai_provider,
         database,
+        notifications,
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
             firebase_auth,
             config.firebase_project_id,

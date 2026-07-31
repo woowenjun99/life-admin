@@ -10,6 +10,8 @@ mod auth;
 mod domain;
 #[path = "../src/inbox.rs"]
 mod inbox;
+#[path = "../src/notifications.rs"]
+mod notifications;
 #[path = "../src/storage.rs"]
 mod storage;
 
@@ -63,6 +65,7 @@ async fn health_endpoint_does_not_require_database_connectivity() {
         database,
         object_store: Arc::new(HealthObjectStore),
         ai_provider: Arc::new(ai::DisabledAiProvider),
+        notifications: Arc::new(notifications::DisabledFcmNotificationService),
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
             Arc::new(firebase_auth),
             "demo-backend",

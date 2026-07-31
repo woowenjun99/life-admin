@@ -930,6 +930,20 @@ footer p {
   gap: 0.7rem;
 }
 
+.notification-settings {
+  display: grid;
+  justify-items: end;
+  gap: 0.2rem;
+}
+
+.notification-settings-status {
+  max-width: 14rem;
+  color: #61746f;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  text-align: right;
+}
+
 .workspace-capture-link {
   border: 1px solid #d16043;
   background: #d16043;

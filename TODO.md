@@ -164,6 +164,9 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Promote the next unfinished ready step as the next action.
   - [x] Let the user archive a Plan after confirmation and return to Today.
 - [x] Make mobile layout usable for quick captures.
+- [x] Make the private workspace installable as a PWA with Firebase Cloud Messaging alerts.
+  - [x] Notify after suggestions or a Plan are generated.
+  - [x] Notify once when a non-complete Plan step is due (date-only, UTC).
 - [ ] Add accessible labels, keyboard navigation, and visible focus states.
 
 ## Privacy and safety

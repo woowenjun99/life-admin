@@ -15,8 +15,10 @@ import {
   parseInboxItems,
   parsePlan,
   parsePlans,
+  removeFcmRegistrationToken,
   restorePlan,
   retryExtraction,
+  saveFcmRegistrationToken,
   saveSuggestions,
   updatePlanStep,
   uploadFileCapture,
@@ -436,6 +438,35 @@ test("updatePlanStep sends the complete status change and preserves API errors",
         { status: "complete", waitingOn: null },
       ),
     ).rejects.toMatchObject({ status: 409, code: "INVALID_STATE" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Firebase messaging token calls are owner-authenticated and do not expose a token in a URL", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input, init) => {
+    requests.push({ input, init });
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+
+  try {
+    const user = { getIdToken: async () => "firebase-id-token" };
+    await saveFcmRegistrationToken(user, "fcm-token-123");
+    await removeFcmRegistrationToken(user, "fcm-token-123");
+
+    expect(requests.map(({ input }) => input)).toEqual([
+      "/api/v1/fcm-registration-tokens",
+      "/api/v1/fcm-registration-tokens",
+    ]);
+    expect(requests.map(({ init }) => init?.method)).toEqual(["PUT", "DELETE"]);
+    for (const request of requests) {
+      expect(new Headers(request.init?.headers).get("Authorization")).toBe(
+        "Bearer firebase-id-token",
+      );
+      expect(request.init?.body).toBe('{"token":"fcm-token-123"}');
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

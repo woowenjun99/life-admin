@@ -162,7 +162,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Let the user mark a step complete or waiting.
   - [x] Promote the next unfinished ready step as the next action.
   - [x] Let the user archive a Plan after confirmation and return to Today.
-- [ ] Make mobile layout usable for quick captures.
+- [x] Make mobile layout usable for quick captures.
 - [ ] Add accessible labels, keyboard navigation, and visible focus states.
 
 ## Privacy and safety

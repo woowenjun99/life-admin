@@ -150,6 +150,15 @@ function CaptureModal({
   const [fileState, setFileState] = useState<CaptureState>({ status: "idle" });
 
   useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
     closeButtonRef.current?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {

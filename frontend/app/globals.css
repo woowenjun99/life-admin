@@ -1758,11 +1758,44 @@ footer p {
   }
 
   .capture-modal-backdrop {
-    padding: 1rem;
+    place-items: end stretch;
+    padding: 0;
   }
 
   .capture-modal {
-    padding: 1.5rem;
+    width: 100%;
+    max-height: calc(100dvh - env(safe-area-inset-top));
+    padding: 1.25rem max(1rem, env(safe-area-inset-right))
+      max(1rem, env(safe-area-inset-bottom))
+      max(1rem, env(safe-area-inset-left));
+    border-bottom: 0;
+    border-radius: 1.25rem 1.25rem 0 0;
+  }
+
+  .capture-modal > h2 {
+    font-size: clamp(2rem, 11vw, 2.6rem);
+  }
+
+  .capture-modal-close {
+    top: 0.75rem;
+    right: max(0.75rem, env(safe-area-inset-right));
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .capture-mode-switcher {
+    display: flex;
+    width: 100%;
+  }
+
+  .capture-mode-button {
+    flex: 1;
+    min-height: 2.75rem;
+  }
+
+  .capture-form {
+    margin-top: 1rem;
+    padding: 1rem;
   }
 
   .workspace-page {
@@ -1784,6 +1817,20 @@ footer p {
   }
 
   .capture-form-footer .button {
+    width: 100%;
+  }
+
+  .capture-launcher {
+    margin-top: 2.5rem;
+    padding: 1.5rem;
+  }
+
+  .capture-launcher-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .capture-launcher-actions .button {
     width: 100%;
   }
 }

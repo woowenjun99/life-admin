@@ -9,6 +9,7 @@ export type InboxItem = {
   planId?: string;
   sourceType: "text" | "image" | "pdf";
   status: "captured" | "reviewing" | "planned" | "archived";
+  canRetryExtraction: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -416,6 +417,7 @@ function parseInboxItemValue(
         "planId",
         "sourceType",
         "status",
+        "canRetryExtraction",
         "originalText",
         "originalFilename",
         "contentType",
@@ -424,15 +426,32 @@ function parseInboxItemValue(
         "createdAt",
         "updatedAt",
       ]
-    : ["id", "planId", "sourceType", "status", "createdAt", "updatedAt"];
+    : [
+        "id",
+        "planId",
+        "sourceType",
+        "status",
+        "canRetryExtraction",
+        "createdAt",
+        "updatedAt",
+      ];
   if (!Object.keys(payload).every((key) => allowed.includes(key)))
     throw invalid(message);
-  const { id, planId, sourceType, status, createdAt, updatedAt } = payload;
+  const {
+    id,
+    planId,
+    sourceType,
+    status,
+    canRetryExtraction,
+    createdAt,
+    updatedAt,
+  } = payload;
   if (
     typeof id !== "string" ||
     !(typeof planId === "string" || planId === undefined) ||
     !isSourceType(sourceType) ||
     !isInboxStatus(status) ||
+    typeof canRetryExtraction !== "boolean" ||
     typeof createdAt !== "string" ||
     typeof updatedAt !== "string"
   )
@@ -442,6 +461,7 @@ function parseInboxItemValue(
     ...(planId === undefined ? {} : { planId }),
     sourceType,
     status,
+    canRetryExtraction,
     createdAt,
     updatedAt,
   };

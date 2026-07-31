@@ -111,7 +111,7 @@ export function InboxList({
                   Review <span aria-hidden="true">→</span>
                 </Link>
               ) : null}
-              {item.status === "captured" && item.sourceType !== "image" ? (
+              {item.status === "captured" && item.canRetryExtraction ? (
                 <Link
                   className="text-link inbox-item-action"
                   href={`/inbox/${item.id}/review`}

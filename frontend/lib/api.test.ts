@@ -46,6 +46,7 @@ test("createTextCapture sends a bearer JSON request and parses the safe item res
         id: "item-123",
         sourceType: "text",
         status: "captured",
+        canRetryExtraction: true,
         createdAt: "2026-07-30T00:00:00Z",
         updatedAt: "2026-07-30T00:00:00Z",
       },
@@ -83,6 +84,7 @@ test("fetchInboxItems sends a bearer request and parses metadata-only results", 
           planId: "plan-789",
           sourceType: "pdf",
           status: "captured",
+          canRetryExtraction: false,
           createdAt: "2026-07-30T00:00:00Z",
           updatedAt: "2026-07-30T00:00:00Z",
         },
@@ -98,6 +100,7 @@ test("fetchInboxItems sends a bearer request and parses metadata-only results", 
     expect(items).toHaveLength(1);
     expect(items[0]?.sourceType).toBe("pdf");
     expect(items[0]?.planId).toBe("plan-789");
+    expect(items[0]?.canRetryExtraction).toBe(false);
     expect(request?.input).toBe("/api/v1/inbox-items");
     expect(request?.init?.cache).toBe("no-store");
     expect(new Headers(request?.init?.headers).get("Authorization")).toBe(
@@ -116,6 +119,7 @@ test("Inbox parsers reject private fields in a list and require valid detail pay
           id: "item-123",
           sourceType: "text",
           status: "captured",
+          canRetryExtraction: true,
           createdAt: "2026-07-30T00:00:00Z",
           updatedAt: "2026-07-30T00:00:00Z",
           originalText: "This field is not list metadata",
@@ -130,6 +134,7 @@ test("Inbox parsers reject private fields in a list and require valid detail pay
         id: "item-123",
         sourceType: "text",
         status: "captured",
+        canRetryExtraction: true,
         originalText: "Renew passport",
         originalFilename: null,
         contentType: null,
@@ -147,6 +152,7 @@ test("Inbox parsers reject private fields in a list and require valid detail pay
         id: "item-456",
         sourceType: "pdf",
         status: "captured",
+        canRetryExtraction: false,
         originalText: null,
         originalFilename: "letter.pdf",
         contentType: "application/pdf",
@@ -195,6 +201,7 @@ test("uploadFileCapture sends multipart without a browser-selected content type 
         id: "item-456",
         sourceType: "pdf",
         status: "captured",
+        canRetryExtraction: true,
         createdAt: "2026-07-30T00:00:00Z",
         updatedAt: "2026-07-30T00:00:00Z",
       },
@@ -294,6 +301,7 @@ test("review and Plan API calls require a bearer token and use only safe respons
           id: "item-123",
           sourceType: "text",
           status: "reviewing",
+          canRetryExtraction: false,
           originalText: "Renew passport",
           originalFilename: null,
           contentType: null,
@@ -309,6 +317,7 @@ test("review and Plan API calls require a bearer token and use only safe respons
         id: "item-123",
         sourceType: "text",
         status: "reviewing",
+        canRetryExtraction: false,
         originalText: "Renew passport",
         originalFilename: null,
         contentType: null,

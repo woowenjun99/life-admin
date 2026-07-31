@@ -2,6 +2,8 @@ use std::{env, net::SocketAddr};
 
 use anyhow::{Context, Result, bail};
 
+use crate::ai::AiApiMode;
+
 #[derive(Clone)]
 pub struct Config {
     pub bind_addr: SocketAddr,
@@ -11,6 +13,7 @@ pub struct Config {
     pub firebase_service_account_json: Option<String>,
     pub firebase_storage_bucket: String,
     pub openai_api_key: Option<String>,
+    pub openai_api_mode: AiApiMode,
     pub openai_base_url: String,
     pub openai_model: String,
 }
@@ -40,6 +43,9 @@ impl Config {
             firebase_service_account_json: optional("FIREBASE_SERVICE_ACCOUNT_JSON"),
             firebase_storage_bucket: required("FIREBASE_STORAGE_BUCKET")?,
             openai_api_key: optional("OPENAI_API_KEY"),
+            openai_api_mode: AiApiMode::parse(
+                &env::var("OPENAI_API_MODE").unwrap_or_else(|_| "responses".to_owned()),
+            )?,
             openai_base_url: env::var("OPENAI_BASE_URL")
                 .unwrap_or_else(|_| "https://api.openai.com/v1".to_owned()),
             openai_model: env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.6-terra".to_owned()),

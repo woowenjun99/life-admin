@@ -219,7 +219,7 @@ async fn capture_response_after_extraction(
     owner_uid: &str,
     item: InboxItem,
 ) -> Response {
-    let original = InboxItemResponse::from(&item);
+    let original = InboxItemResponse::from_item(&item, state.ai_provider.as_ref());
     match item.source_type {
         CaptureSourceType::Image => (
             StatusCode::CREATED,
@@ -234,8 +234,19 @@ async fn capture_response_after_extraction(
                 Ok(detail) => (
                     StatusCode::CREATED,
                     Json(CaptureResponse {
-                        inbox_item: InboxItemResponse::from(&detail.item),
+                        inbox_item: InboxItemResponse::from_item(
+                            &detail.item,
+                            state.ai_provider.as_ref(),
+                        ),
                         extraction: ExtractionState::Ready,
+                    }),
+                )
+                    .into_response(),
+                Err(ExtractionError::Unsupported) => (
+                    StatusCode::CREATED,
+                    Json(CaptureResponse {
+                        inbox_item: original,
+                        extraction: ExtractionState::NotSupported,
                     }),
                 )
                     .into_response(),
@@ -263,7 +274,10 @@ async fn list_inbox_items(State(state): State<AppState>, headers: HeaderMap) -> 
         Ok(items) => (
             StatusCode::OK,
             Json(ListInboxItemsResponse {
-                inbox_items: items.iter().map(InboxItemResponse::from).collect(),
+                inbox_items: items
+                    .iter()
+                    .map(|item| InboxItemResponse::from_item(item, state.ai_provider.as_ref()))
+                    .collect(),
             }),
         )
             .into_response(),
@@ -289,7 +303,7 @@ async fn get_inbox_item(
         Ok(Some(item)) => (
             StatusCode::OK,
             Json(GetInboxItemResponse {
-                inbox_item: InboxItemDetailResponse::from(&item),
+                inbox_item: InboxItemDetailResponse::from_item(&item, state.ai_provider.as_ref()),
             }),
         )
             .into_response(),
@@ -316,7 +330,7 @@ async fn extract_inbox_item(
         Ok(item) => (
             StatusCode::OK,
             Json(GetInboxItemResponse {
-                inbox_item: InboxItemDetailResponse::from(&item),
+                inbox_item: InboxItemDetailResponse::from_item(&item, state.ai_provider.as_ref()),
             }),
         )
             .into_response(),
@@ -371,7 +385,7 @@ async fn replace_suggestions(
         Ok(Some(item)) => (
             StatusCode::OK,
             Json(GetInboxItemResponse {
-                inbox_item: InboxItemDetailResponse::from(&item),
+                inbox_item: InboxItemDetailResponse::from_item(&item, state.ai_provider.as_ref()),
             }),
         )
             .into_response(),
@@ -545,9 +559,11 @@ async fn extract_owned_item(
         }
         CaptureSourceType::Image => return Err(ExtractionError::Unsupported),
     };
-    let suggestions = extract_with_single_retry(state, input)
-        .await
-        .map_err(ExtractionError::Ai)?;
+    let suggestions = match extract_with_single_retry(state, input).await {
+        Ok(suggestions) => suggestions,
+        Err(AiError::Unsupported) => return Err(ExtractionError::Unsupported),
+        Err(error) => return Err(ExtractionError::Ai(error)),
+    };
     state
         .inbox_repository
         .save_extraction(owner_uid, item_id, &suggestions)
@@ -685,7 +701,7 @@ fn extraction_error_response(error: ExtractionError) -> Response {
         ExtractionError::Unsupported => api_error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
             "UNSUPPORTED_CAPTURE",
-            "Image extraction is not available yet.",
+            "AI extraction is not available for this capture type.",
         ),
         ExtractionError::Storage => storage_unavailable_response(),
         ExtractionError::Ai(error) => ai_error_response(error),
@@ -697,6 +713,11 @@ fn extraction_error_response(error: ExtractionError) -> Response {
 
 fn ai_error_response(error: AiError) -> Response {
     match error {
+        AiError::Unsupported => api_error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "AI_UNSUPPORTED",
+            "The configured AI provider does not support this operation.",
+        ),
         AiError::InvalidOutput => api_error_response(
             StatusCode::BAD_GATEWAY,
             "AI_OUTPUT_INVALID",
@@ -844,17 +865,19 @@ struct InboxItemResponse {
     plan_id: Option<Uuid>,
     source_type: CaptureSourceType,
     status: InboxStatus,
+    can_retry_extraction: bool,
     created_at: String,
     updated_at: String,
 }
 
-impl From<&InboxItem> for InboxItemResponse {
-    fn from(item: &InboxItem) -> Self {
+impl InboxItemResponse {
+    fn from_item(item: &InboxItem, provider: &dyn AiProvider) -> Self {
         Self {
             id: item.id,
             plan_id: item.plan_id,
             source_type: item.source_type,
             status: item.status,
+            can_retry_extraction: can_retry_extraction(item, provider),
             created_at: format_timestamp(item.created_at),
             updated_at: format_timestamp(item.updated_at),
         }
@@ -869,6 +892,7 @@ struct InboxItemDetailResponse {
     plan_id: Option<Uuid>,
     source_type: CaptureSourceType,
     status: InboxStatus,
+    can_retry_extraction: bool,
     original_text: Option<String>,
     original_filename: Option<String>,
     content_type: Option<String>,
@@ -878,13 +902,14 @@ struct InboxItemDetailResponse {
     updated_at: String,
 }
 
-impl From<&InboxItemDetail> for InboxItemDetailResponse {
-    fn from(item: &InboxItemDetail) -> Self {
+impl InboxItemDetailResponse {
+    fn from_item(item: &InboxItemDetail, provider: &dyn AiProvider) -> Self {
         Self {
             id: item.item.id,
             plan_id: item.item.plan_id,
             source_type: item.item.source_type,
             status: item.item.status,
+            can_retry_extraction: can_retry_extraction(&item.item, provider),
             original_text: item.original_text.clone(),
             original_filename: item.original_filename.clone(),
             content_type: item.content_type.clone(),
@@ -898,6 +923,15 @@ impl From<&InboxItemDetail> for InboxItemDetailResponse {
             updated_at: format_timestamp(item.item.updated_at),
         }
     }
+}
+
+fn can_retry_extraction(item: &InboxItem, provider: &dyn AiProvider) -> bool {
+    item.status == InboxStatus::Captured
+        && match item.source_type {
+            CaptureSourceType::Text => true,
+            CaptureSourceType::Pdf => provider.supports_pdf_extraction(),
+            CaptureSourceType::Image => false,
+        }
 }
 
 #[derive(Serialize)]
@@ -1013,9 +1047,12 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use super::{AppState, MAX_FILE_BYTES, router};
+    use super::{AppState, MAX_FILE_BYTES, can_retry_extraction, router};
     use crate::{
-        ai::{AiCall, AiError, AiProvider, DisabledAiProvider, Extraction, ExtractionInput},
+        ai::{
+            AiApiMode, AiCall, AiError, AiProvider, DisabledAiProvider, Extraction,
+            ExtractionInput, OpenAiProvider,
+        },
         auth::{AuthenticatedUser, TokenVerifier},
         domain::{CaptureSourceType, InboxStatus, PlanStatus},
         inbox::{
@@ -1379,6 +1416,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn chat_completions_marks_pdf_captures_as_not_retryable() {
+        let provider = OpenAiProvider::new(
+            "test-key".to_owned(),
+            "deepseek-v4-pro".to_owned(),
+            "https://api.deepseek.com".to_owned(),
+            AiApiMode::ChatCompletions,
+        )
+        .unwrap();
+
+        assert!(!can_retry_extraction(
+            &item(CaptureSourceType::Pdf),
+            &provider
+        ));
+        assert!(can_retry_extraction(
+            &item(CaptureSourceType::Text),
+            &provider
+        ));
+    }
+
     #[derive(Default)]
     struct TestObjectStore {
         uploads: Mutex<usize>,
@@ -1520,6 +1577,34 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
         assert_eq!(response_json(response).await["extraction"], "not_supported");
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn unsupported_ai_input_is_saved_without_a_retryable_extraction_state() {
+        let repository = Arc::new(WorkflowInboxRepository::default());
+        let provider = Arc::new(SequenceExtractionProvider::new(vec![Err(
+            AiError::Unsupported,
+        )]));
+        let response = workflow_app(repository.clone(), provider)
+            .oneshot(valid(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/inbox-items")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"text":"Renew passport"}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let payload = response_json(response).await;
+        assert_eq!(payload["extraction"], "not_supported");
+        let item_id = Uuid::parse_str(payload["inboxItem"]["id"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            repository.detail(item_id).item.status,
+            InboxStatus::Captured
+        );
     }
 
     #[tokio::test]

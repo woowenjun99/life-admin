@@ -238,7 +238,7 @@ function CaptureModal({
         message:
           result.extraction === "retryable"
             ? "Private PDF saved. Sorting is unavailable; retry it from your Inbox."
-            : "Private file saved. Image sorting is not available yet.",
+            : "Private file saved. Sorting is not available for this file type.",
       });
     } catch (error) {
       setFileState({ status: "error", message: captureErrorMessage(error) });

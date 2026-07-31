@@ -11,7 +11,10 @@ mod storage;
 
 use std::sync::Arc;
 
-use ai::{AiProvider, DisabledAiProvider, OpenAiProvider, spawn_cleanup_worker};
+use ai::{
+    AiProvider, DisabledAiProvider, OpenAiProvider, ensure_cleanup_queue_is_serviceable,
+    spawn_cleanup_worker,
+};
 use anyhow::{Context, Result};
 use app::{AppState, router};
 use auth::FirebaseTokenVerifier;
@@ -51,9 +54,11 @@ async fn main() -> Result<()> {
             api_key,
             config.openai_model,
             config.openai_base_url,
+            config.openai_api_mode,
         )?),
         None => Arc::new(DisabledAiProvider),
     };
+    ensure_cleanup_queue_is_serviceable(&database, ai_provider.as_ref()).await?;
     spawn_cleanup_worker(database.clone(), ai_provider.clone());
 
     let app = router(AppState {

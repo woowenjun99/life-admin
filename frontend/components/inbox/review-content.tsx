@@ -181,6 +181,20 @@ export function ReviewContent({ itemId }: { itemId: string }) {
       </section>
     );
   }
+  if (state.item.status === "captured" && !state.item.canRetryExtraction) {
+    const message =
+      state.item.sourceType === "pdf"
+        ? "This PDF is stored privately, but the configured AI provider cannot sort PDFs."
+        : "Images are stored privately but cannot be sorted yet.";
+    return (
+      <section className="workspace-panel review-panel review-empty">
+        <p>{message}</p>
+        <Link className="button button-primary" href="/today">
+          Return to Today
+        </Link>
+      </section>
+    );
+  }
   if (state.item.status === "captured") {
     return (
       <section className="workspace-panel review-panel review-empty">

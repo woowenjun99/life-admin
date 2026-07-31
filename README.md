@@ -111,12 +111,31 @@ launcher points the server at the Storage Emulator.
 To enable extraction and plan generation locally, set `OPENAI_API_KEY` in
 `backend/.env`. The key is read only by Axum; it must never appear in a browser
 environment file. `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`,
-and `OPENAI_MODEL` defaults to `gpt-5.6-terra`. You can point the base URL at a
-compatible provider for a proof of concept, but it must support the
+`OPENAI_MODEL` defaults to `gpt-5.6-terra`, and `OPENAI_API_MODE` defaults to
+`responses`. That default uses the
 [Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses),
-strict structured outputs, and the temporary PDF Files API flow used here.
-Without a key, captures are still saved and text/PDF extraction reports a
-retryable provider state instead of discarding the capture.
+strict structured outputs, and the temporary PDF Files API flow.
+
+For DeepSeek text-note extraction and plan generation, use its Chat
+Completions compatibility API:
+
+```dotenv
+OPENAI_API_MODE=chat_completions
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-v4-pro
+```
+
+Chat Completions mode validates JSON output in the backend, but does not send
+PDFs to the provider because it does not rely on a provider Files API. A PDF
+is still saved privately and reported as unsupported for extraction. Without a
+key, captures are still saved and text/PDF extraction reports a retryable
+provider state instead of discarding the capture.
+
+Before switching an existing deployment to Chat Completions mode, run it with
+the prior Responses-mode provider settings until any queued provider-file
+deletions have drained. The server refuses to start an incompatible mode while
+that cleanup queue is non-empty, so private PDFs are not left at the old
+provider.
 
 The launcher starts PostgreSQL on `5432`, Firebase Auth Emulator on `9099`,
 Firebase Storage Emulator on `9199` (with its UI on `4000`), Axum on `3001`,
@@ -212,13 +231,15 @@ not a substitute for content safety screening.
 
 ## AI data handling and review
 
-When `OPENAI_API_KEY` is configured, saved text and PDF captures are sent to
-the configured AI provider solely to produce structured, evidence-backed draft
-suggestions. The default provider is OpenAI; changing `OPENAI_BASE_URL` changes
-where those captures are sent. JPEG and PNG captures are never sent to the AI
-provider in this increment. PDFs use the temporary Files API flow; the backend
-deletes the provider file after extraction and queues server-side cleanup if
-that deletion is temporarily unavailable.
+When `OPENAI_API_KEY` is configured, saved text captures are sent to the
+configured AI provider solely to produce structured, evidence-backed draft
+suggestions. The default provider is OpenAI and uses Responses mode; changing
+`OPENAI_BASE_URL` changes where those captures are sent. JPEG and PNG captures
+are never sent to the AI provider in this increment. In Responses mode, PDFs
+use the temporary Files API flow; the backend deletes the provider file after
+extraction and queues server-side cleanup if that deletion is temporarily
+unavailable. In Chat Completions mode, PDFs remain private but are not sent to
+the provider.
 
 The configured AI provider receives untrusted capture data, never authorization
 to act. The model is instructed to preserve missing details as questions and to

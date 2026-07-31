@@ -42,9 +42,10 @@ features that are already automated.
 | “The washing machine is making a loud noise.” | Whether this is urgent, any warranty details, and possible repair options. | Find the model number and request a repair quote. |
 
 Today, the implementation supports private authentication, authenticated text
-capture, and private PDF/JPEG/PNG capture. Review, extraction, planning, file
-reads/downloads, and step completion are the intended later stages illustrated
-above.
+and PDF/JPEG/PNG capture, text/PDF extraction into editable suggestions, an
+explicit plan-generation confirmation, and a read-only Plan page. Image
+captures remain private and saved, but are not AI-extracted. Step completion
+and waiting-state updates are still later stages.
 
 ## Research and market-discovery starting point
 
@@ -64,11 +65,11 @@ interviews, competitive research, and usability testing are still needed.
   measuring the size of this product's market.
 
 The current implementation provides the private Firebase-authenticated
-workspace, text capture, and one-file private capture backed by PostgreSQL
-metadata and Firebase Storage. Every supported upload is type/size checked and
-stored privately. AI-assisted extraction, reviewed plans, Inbox listing, and
-file reads/downloads are still planned; they are not represented as completed
-product capabilities here.
+workspace, text and private-file capture backed by PostgreSQL metadata and
+Firebase Storage, automatic text/PDF extraction, editable review, and
+read-only plans. Every supported upload is type/size checked and stored
+privately. Image extraction, plan listing, step updates, and archive/delete
+controls are intentionally not included.
 
 ## Technical overview
 
@@ -106,6 +107,16 @@ stack with one command:
 Set `FIREBASE_STORAGE_BUCKET` in `backend/.env` as well as the Firebase Auth
 project value. For local emulation the bucket name is an identifier only; the
 launcher points the server at the Storage Emulator.
+
+To enable extraction and plan generation locally, set `OPENAI_API_KEY` in
+`backend/.env`. The key is read only by Axum; it must never appear in a browser
+environment file. `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`,
+and `OPENAI_MODEL` defaults to `gpt-5.6-terra`. You can point the base URL at a
+compatible provider for a proof of concept, but it must support the
+[Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses),
+strict structured outputs, and the temporary PDF Files API flow used here.
+Without a key, captures are still saved and text/PDF extraction reports a
+retryable provider state instead of discarding the capture.
 
 The launcher starts PostgreSQL on `5432`, Firebase Auth Emulator on `9099`,
 Firebase Storage Emulator on `9199` (with its UI on `4000`), Axum on `3001`,
@@ -195,8 +206,29 @@ for emulator access.
 `file`. It accepts one PDF, JPEG, or PNG of up to 10 MiB, verifies its declared
 MIME type against its magic bytes, rejects unsafe display filenames, and then
 writes the object and its Inbox metadata. Object keys are generated server-side
-and are never returned to the browser. This increment has no file listing,
-preview, download, or direct browser Storage access.
+and are never returned to the browser. There is no direct browser Storage
+access. This increment does not include malware scanning; type validation is
+not a substitute for content safety screening.
+
+## AI data handling and review
+
+When `OPENAI_API_KEY` is configured, saved text and PDF captures are sent to
+the configured AI provider solely to produce structured, evidence-backed draft
+suggestions. The default provider is OpenAI; changing `OPENAI_BASE_URL` changes
+where those captures are sent. JPEG and PNG captures are never sent to the AI
+provider in this increment. PDFs use the temporary Files API flow; the backend
+deletes the provider file after extraction and queues server-side cleanup if
+that deletion is temporarily unavailable.
+
+The configured AI provider receives untrusted capture data, never authorization
+to act. The model is instructed to preserve missing details as questions and to
+ignore instructions embedded in a capture. Before a plan is generated, people
+can edit or remove every suggestion. Planning receives only that reviewed list,
+and the product does not take external actions. Provider file identifiers,
+Storage object keys, and credentials are never returned in API responses.
+
+For a PDF, the review screen reads the file through an authenticated,
+owner-scoped backend stream; it does not expose a Firebase Storage URL.
 
 Set `FIREBASE_STORAGE_BUCKET` to the production bucket name. The service
 account must have bucket-level object create and delete permission, while the
@@ -230,8 +262,8 @@ Build the backend image from the repository root:
 docker build --file backend/Dockerfile --tag full-stack-backend backend
 ```
 
-Provide `DATABASE_URL`, `FIREBASE_PROJECT_ID`, `FIREBASE_STORAGE_BUCKET`, and
-`FIREBASE_SERVICE_ACCOUNT_JSON` through the container platform's secret and
-environment configuration. The image listens on port `3001`; keep it on a
-private network and set the frontend's `BACKEND_INTERNAL_URL` to its internal
-service URL.
+Provide `DATABASE_URL`, `FIREBASE_PROJECT_ID`, `FIREBASE_STORAGE_BUCKET`,
+`FIREBASE_SERVICE_ACCOUNT_JSON`, and (when AI is enabled) `OPENAI_API_KEY`
+through the container platform's secret and environment configuration. The
+image listens on port `3001`; keep it on a private network and set the
+frontend's `BACKEND_INTERNAL_URL` to its internal service URL.

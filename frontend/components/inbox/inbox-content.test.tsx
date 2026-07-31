@@ -35,8 +35,9 @@ test("Inbox list renders loading, empty, retry, and status states", () => {
           items: [
             {
               id: "item-123",
+              planId: "plan-123",
               sourceType: "pdf",
-              status: "captured",
+              status: "planned",
               createdAt: "2026-07-30T00:00:00Z",
               updatedAt: "2026-07-30T00:00:00Z",
             },
@@ -45,4 +46,24 @@ test("Inbox list renders loading, empty, retry, and status states", () => {
       />,
     ),
   ).toContain("PDF capture");
+  expect(
+    renderToStaticMarkup(
+      <InboxList
+        onRetry={retry}
+        state={{
+          status: "ready",
+          items: [
+            {
+              id: "item-123",
+              planId: "plan-123",
+              sourceType: "pdf",
+              status: "planned",
+              createdAt: "2026-07-30T00:00:00Z",
+              updatedAt: "2026-07-30T00:00:00Z",
+            },
+          ],
+        }}
+      />,
+    ),
+  ).toContain('href="/plans/plan-123"');
 });

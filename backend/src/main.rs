@@ -1,3 +1,4 @@
+mod ai;
 mod app;
 mod auth;
 mod config;
@@ -10,6 +11,7 @@ mod storage;
 
 use std::sync::Arc;
 
+use ai::{AiProvider, DisabledAiProvider, OpenAiProvider, spawn_cleanup_worker};
 use anyhow::{Context, Result};
 use app::{AppState, router};
 use auth::FirebaseTokenVerifier;
@@ -44,10 +46,20 @@ async fn main() -> Result<()> {
         .await
         .context("could not initialize Firebase Storage")?,
     );
+    let ai_provider: Arc<dyn AiProvider> = match config.openai_api_key {
+        Some(api_key) => Arc::new(OpenAiProvider::new(
+            api_key,
+            config.openai_model,
+            config.openai_base_url,
+        )?),
+        None => Arc::new(DisabledAiProvider),
+    };
+    spawn_cleanup_worker(database.clone(), ai_provider.clone());
 
     let app = router(AppState {
         inbox_repository: Arc::new(SqlxInboxRepository::new(database.clone())),
         object_store,
+        ai_provider,
         database,
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
             firebase_auth,

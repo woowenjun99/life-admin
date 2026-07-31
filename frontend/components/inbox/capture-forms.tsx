@@ -5,8 +5,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth/auth-provider";
 import {
+  type CaptureResult,
   createTextCapture,
-  type InboxItem,
   uploadFileCapture,
   validateCaptureFile,
 } from "@/lib/api";
@@ -33,7 +33,7 @@ const FOCUSABLE_SELECTOR = [
 ].join(", ");
 
 type CaptureFormsProps = {
-  onCaptured?(item: InboxItem): void;
+  onCaptured?(result: CaptureResult): void;
 };
 
 export function CaptureForms({ onCaptured }: CaptureFormsProps) {
@@ -103,10 +103,11 @@ function CaptureModal({
   onClose,
 }: {
   initialMode: CaptureMode;
-  onCaptured?(item: InboxItem): void;
+  onCaptured?(result: CaptureResult): void;
   onClose(): void;
 }) {
   const { user } = useAuth();
+  const router = useRouter();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -173,10 +174,20 @@ function CaptureModal({
 
     setTextState({ status: "submitting" });
     try {
-      const item = await createTextCapture(user, text);
+      const result = await createTextCapture(user, text);
       setText("");
-      setTextState({ status: "success", message: "Private note captured." });
-      onCaptured?.(item);
+      onCaptured?.(result);
+      if (result.extraction === "ready") {
+        router.push(`/inbox/${result.item.id}/review`);
+        return;
+      }
+      setTextState({
+        status: "success",
+        message:
+          result.extraction === "retryable"
+            ? "Private note saved. Sorting is unavailable; retry it from your Inbox."
+            : "Private note captured.",
+      });
     } catch (error) {
       setTextState({ status: "error", message: captureErrorMessage(error) });
     }
@@ -211,17 +222,24 @@ function CaptureModal({
 
     setFileState({ status: "submitting" });
     try {
-      const item = await uploadFileCapture(user, file);
+      const result = await uploadFileCapture(user, file);
       setFile(null);
       setFileValidation(null);
       if (fileInput.current) {
         fileInput.current.value = "";
       }
+      onCaptured?.(result);
+      if (result.extraction === "ready") {
+        router.push(`/inbox/${result.item.id}/review`);
+        return;
+      }
       setFileState({
         status: "success",
-        message: "Private file captured.",
+        message:
+          result.extraction === "retryable"
+            ? "Private PDF saved. Sorting is unavailable; retry it from your Inbox."
+            : "Private file saved. Image sorting is not available yet.",
       });
-      onCaptured?.(item);
     } catch (error) {
       setFileState({ status: "error", message: captureErrorMessage(error) });
     }
@@ -292,6 +310,8 @@ function CaptureModal({
               <h3>Save a note</h3>
               <p>
                 Keep a thought, reminder, or loose end in your private Inbox.
+                Notes are sent to the configured AI provider to draft
+                suggestions for your review.
               </p>
             </div>
             <label htmlFor="capture-text">What do you want to remember?</label>
@@ -324,7 +344,9 @@ function CaptureModal({
             <div className="capture-form-heading">
               <h3>Save one file</h3>
               <p>
-                PDF, JPEG, or PNG only. Maximum 10 MiB.
+                PDF, JPEG, or PNG only. Maximum 10 MiB. PDFs are sent to the
+                configured AI provider to draft suggestions for your review;
+                images are stored only.
               </p>
             </div>
             <label htmlFor="capture-file">Choose a file</label>

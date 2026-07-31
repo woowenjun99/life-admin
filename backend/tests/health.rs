@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+
+#[path = "../src/ai.rs"]
+mod ai;
 #[path = "../src/app.rs"]
 mod app;
 #[path = "../src/auth.rs"]
@@ -39,6 +43,10 @@ impl storage::PrivateObjectStore for HealthObjectStore {
     async fn delete(&self, _object_key: &str) -> anyhow::Result<()> {
         Ok(())
     }
+
+    async fn download(&self, _object_key: &str) -> anyhow::Result<Vec<u8>> {
+        anyhow::bail!("not used by health checks")
+    }
 }
 
 #[tokio::test]
@@ -54,6 +62,7 @@ async fn health_endpoint_does_not_require_database_connectivity() {
         inbox_repository: Arc::new(SqlxInboxRepository::new(database.clone())),
         database,
         object_store: Arc::new(HealthObjectStore),
+        ai_provider: Arc::new(ai::DisabledAiProvider),
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
             Arc::new(firebase_auth),
             "demo-backend",

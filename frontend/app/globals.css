@@ -1556,3 +1556,263 @@ footer p {
     width: 100%;
   }
 }
+
+.review-panel,
+.plan-panel {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.review-heading,
+.review-section-heading,
+.review-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.review-heading h1 {
+  max-width: 13ch;
+  font-size: clamp(2.45rem, 5vw, 4.15rem);
+  line-height: 0.98;
+}
+
+.review-safety,
+.review-notice,
+.plan-summary {
+  max-width: 48rem;
+  color: #61746f;
+  line-height: 1.55;
+}
+
+.review-grid {
+  display: grid;
+  grid-template-columns: minmax(16rem, 0.74fr) minmax(0, 1.26fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.review-original,
+.review-suggestions,
+.next-action-live,
+.plan-steps-live li {
+  border: 1px solid #deded3;
+  border-radius: 1.1rem;
+  background: rgb(255 255 252 / 72%);
+}
+
+.review-original,
+.review-suggestions {
+  padding: clamp(1.1rem, 3vw, 1.75rem);
+}
+
+.review-original-text {
+  margin-top: 0.85rem;
+  white-space: pre-wrap;
+  color: #34564e;
+  line-height: 1.6;
+}
+
+.review-file-name {
+  margin-top: 0.65rem;
+  color: #32564d;
+  font-weight: 700;
+}
+
+.review-pdf {
+  width: 100%;
+  min-height: 32rem;
+  margin-top: 1rem;
+  border: 1px solid #e1e1d9;
+  border-radius: 0.65rem;
+  background: white;
+}
+
+.review-section-heading h2 {
+  margin-top: 0.25rem;
+  font-size: 1.85rem;
+}
+
+.suggestion-list {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1.15rem;
+}
+
+.suggestion-editor {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.45fr) minmax(0, 1.4fr);
+  gap: 0.7rem 0.9rem;
+  margin: 0;
+  padding: 0.9rem;
+  border: 1px solid #e1e1d8;
+  border-radius: 0.8rem;
+}
+
+.suggestion-editor label {
+  display: grid;
+  gap: 0.4rem;
+  color: #4d655f;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.suggestion-editor label:nth-of-type(2) {
+  grid-row: span 2;
+}
+
+.suggestion-editor select,
+.suggestion-editor textarea,
+.suggestion-editor input {
+  width: 100%;
+  border: 1px solid #d7d8d0;
+  border-radius: 0.55rem;
+  background: #fffefb;
+  color: #1d4139;
+  font: inherit;
+}
+
+.suggestion-editor select,
+.suggestion-editor input {
+  min-height: 2.55rem;
+  padding: 0.5rem;
+}
+
+.suggestion-editor textarea {
+  min-height: 6.3rem;
+  padding: 0.65rem;
+  resize: vertical;
+}
+
+.suggestion-editor .button {
+  justify-self: start;
+}
+
+.review-actions {
+  justify-content: flex-end;
+  margin-top: 1.2rem;
+}
+
+.review-empty {
+  max-width: 44rem;
+}
+
+.review-empty h1 {
+  margin-top: 0.4rem;
+  font-size: clamp(2.5rem, 5vw, 4.2rem);
+}
+
+.review-empty > p:not(.workspace-empty-kicker) {
+  max-width: 38rem;
+  margin-top: 0.8rem;
+  color: #60746f;
+  line-height: 1.55;
+}
+
+.review-empty .button {
+  width: fit-content;
+  margin-top: 1rem;
+}
+
+.plan-summary {
+  font-size: 1.07rem;
+  line-height: 1.65;
+}
+
+.next-action-live {
+  padding: clamp(1.25rem, 3vw, 2rem);
+  background: #e8a888;
+}
+
+.next-action-live h2 {
+  max-width: 28rem;
+  margin-top: 0.45rem;
+  color: #294b43;
+  font-size: clamp(1.8rem, 3vw, 2.7rem);
+}
+
+.next-action-live > p:last-child {
+  max-width: 42rem;
+  margin-top: 0.7rem;
+  color: #5c554c;
+  line-height: 1.55;
+}
+
+.plan-steps-live {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-steps-live li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.1rem 1.2rem;
+}
+
+.plan-steps-live li > div {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.plan-step-title {
+  color: #23483f;
+  font-weight: 800;
+}
+
+.plan-steps-live li > div > p:not(.plan-step-title) {
+  color: #61746f;
+  line-height: 1.45;
+}
+
+.plan-steps-live li > div > .plan-step-meta {
+  color: #876b4d;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.plan-steps-live li > span {
+  flex: 0 0 auto;
+  padding: 0.34rem 0.56rem;
+  border-radius: 999px;
+  background: #e5eee5;
+  color: #396254;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.plan-steps-live li.is-waiting > span {
+  background: #f5ead8;
+  color: #906d40;
+}
+
+@media (max-width: 800px) {
+  .review-heading,
+  .review-section-heading,
+  .review-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .review-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .suggestion-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .suggestion-editor label:nth-of-type(2) {
+    grid-row: auto;
+  }
+
+  .plan-steps-live li {
+    gap: 0.8rem;
+    flex-direction: column;
+  }
+}

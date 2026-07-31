@@ -1,12 +1,18 @@
+#![allow(dead_code)]
+
+#[path = "../src/ai.rs"]
+mod ai;
 #[path = "../src/domain.rs"]
 mod domain;
 #[allow(dead_code)]
 #[path = "../src/inbox.rs"]
 mod inbox;
 
-use std::env;
+use std::{collections::VecDeque, env, sync::Mutex};
 
-use inbox::{InboxRepository, SqlxInboxRepository};
+use ai::{AiCall, AiError, AiProvider, Extraction};
+use async_trait::async_trait;
+use inbox::{InboxRepository, NewPlan, SqlxInboxRepository, Suggestion};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
@@ -88,4 +94,111 @@ async fn sqlx_repository_scopes_reads_to_the_owner_and_orders_newest_first() {
         .execute(&database)
         .await
         .expect("test inbox items should clean up");
+}
+
+struct CleanupProvider {
+    delete_results: Mutex<VecDeque<Result<(), AiError>>>,
+}
+
+impl CleanupProvider {
+    fn new(delete_results: Vec<Result<(), AiError>>) -> Self {
+        Self {
+            delete_results: Mutex::new(delete_results.into()),
+        }
+    }
+}
+
+#[async_trait]
+impl AiProvider for CleanupProvider {
+    async fn extract(&self, _input: ai::ExtractionInput) -> AiCall<Extraction> {
+        AiCall {
+            result: Err(AiError::Unavailable),
+            cleanup_file_id: None,
+        }
+    }
+
+    async fn plan(&self, _suggestions: &[Suggestion]) -> Result<NewPlan, AiError> {
+        Err(AiError::Unavailable)
+    }
+
+    async fn delete_file(&self, _file_id: &str) -> Result<(), AiError> {
+        self.delete_results
+            .lock()
+            .expect("test cleanup result queue should not be poisoned")
+            .pop_front()
+            .unwrap_or(Err(AiError::Unavailable))
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL for an isolated PostgreSQL database"]
+async fn cleanup_queue_retries_provider_file_deletion_without_capture_content() {
+    let database = test_database().await;
+    let file_id = format!("file-test-{}", Uuid::new_v4());
+    ai::enqueue_cleanup(&database, &file_id)
+        .await
+        .expect("cleanup identifier should persist");
+
+    let failing = CleanupProvider::new(vec![Err(AiError::Transient)]);
+    ai::retry_cleanup(&database, &failing)
+        .await
+        .expect("failed cleanup attempt should remain durable");
+    let attempts: i32 =
+        sqlx::query_scalar("SELECT attempts FROM openai_file_cleanup WHERE file_id = $1")
+            .bind(&file_id)
+            .fetch_one(&database)
+            .await
+            .expect("cleanup row should remain after a transient provider failure");
+    assert_eq!(attempts, 1);
+
+    let successful = CleanupProvider::new(vec![Ok(())]);
+    ai::retry_cleanup(&database, &successful)
+        .await
+        .expect("successful cleanup should delete the durable queue row");
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM openai_file_cleanup WHERE file_id = $1")
+            .bind(&file_id)
+            .fetch_one(&database)
+            .await
+            .expect("cleanup row query should succeed");
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL for an isolated PostgreSQL database"]
+async fn cleanup_queue_retries_items_after_a_failed_batch() {
+    let database = test_database().await;
+    let file_ids = (0..21)
+        .map(|index| format!("file-test-{index}-{}", Uuid::new_v4()))
+        .collect::<Vec<_>>();
+    for file_id in &file_ids {
+        ai::enqueue_cleanup(&database, file_id)
+            .await
+            .expect("cleanup identifier should persist");
+    }
+
+    let first_batch =
+        CleanupProvider::new((0..20).map(|_| Err(AiError::Transient)).collect::<Vec<_>>());
+    ai::retry_cleanup(&database, &first_batch)
+        .await
+        .expect("first cleanup attempt should finish");
+
+    let second_batch =
+        CleanupProvider::new((0..20).map(|_| Err(AiError::Transient)).collect::<Vec<_>>());
+    ai::retry_cleanup(&database, &second_batch)
+        .await
+        .expect("second cleanup attempt should finish");
+    let last_attempts: i32 =
+        sqlx::query_scalar("SELECT attempts FROM openai_file_cleanup WHERE file_id = $1")
+            .bind(&file_ids[20])
+            .fetch_one(&database)
+            .await
+            .expect("the item after the original batch should be retried");
+    assert_eq!(last_attempts, 1);
+
+    sqlx::query("DELETE FROM openai_file_cleanup WHERE file_id = ANY($1)")
+        .bind(&file_ids)
+        .execute(&database)
+        .await
+        .expect("cleanup queue rows should clean up");
 }

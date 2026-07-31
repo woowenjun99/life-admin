@@ -5,9 +5,15 @@ import {
   createTextCapture,
   fetchInboxItem,
   fetchInboxItems,
+  fetchPlan,
+  fetchPrivatePdf,
+  generatePlan,
   parseCurrentUser,
   parseInboxItemDetail,
   parseInboxItems,
+  parsePlan,
+  retryExtraction,
+  saveSuggestions,
   uploadFileCapture,
   validateCaptureFile,
 } from "./api";
@@ -43,6 +49,7 @@ test("createTextCapture sends a bearer JSON request and parses the safe item res
         createdAt: "2026-07-30T00:00:00Z",
         updatedAt: "2026-07-30T00:00:00Z",
       },
+      extraction: "retryable",
     });
   }) as typeof fetch;
 
@@ -52,7 +59,8 @@ test("createTextCapture sends a bearer JSON request and parses the safe item res
       "Renew passport",
     );
 
-    expect(item.sourceType).toBe("text");
+    expect(item.item.sourceType).toBe("text");
+    expect(item.extraction).toBe("retryable");
     expect(request?.input).toBe("/api/v1/inbox-items");
     const headers = new Headers(request?.init?.headers);
     expect(headers.get("Authorization")).toBe("Bearer firebase-id-token");
@@ -72,6 +80,7 @@ test("fetchInboxItems sends a bearer request and parses metadata-only results", 
       inboxItems: [
         {
           id: "item-789",
+          planId: "plan-789",
           sourceType: "pdf",
           status: "captured",
           createdAt: "2026-07-30T00:00:00Z",
@@ -88,6 +97,7 @@ test("fetchInboxItems sends a bearer request and parses metadata-only results", 
 
     expect(items).toHaveLength(1);
     expect(items[0]?.sourceType).toBe("pdf");
+    expect(items[0]?.planId).toBe("plan-789");
     expect(request?.input).toBe("/api/v1/inbox-items");
     expect(request?.init?.cache).toBe("no-store");
     expect(new Headers(request?.init?.headers).get("Authorization")).toBe(
@@ -124,6 +134,7 @@ test("Inbox parsers reject private fields in a list and require valid detail pay
         originalFilename: null,
         contentType: null,
         byteSize: null,
+        suggestions: [],
         createdAt: "2026-07-30T00:00:00Z",
         updatedAt: "2026-07-30T00:00:00Z",
       },
@@ -140,6 +151,7 @@ test("Inbox parsers reject private fields in a list and require valid detail pay
         originalFilename: "letter.pdf",
         contentType: "application/pdf",
         byteSize: 0,
+        suggestions: [],
         createdAt: "2026-07-30T00:00:00Z",
         updatedAt: "2026-07-30T00:00:00Z",
       },
@@ -186,6 +198,7 @@ test("uploadFileCapture sends multipart without a browser-selected content type 
         createdAt: "2026-07-30T00:00:00Z",
         updatedAt: "2026-07-30T00:00:00Z",
       },
+      extraction: "ready",
     });
   }) as typeof fetch;
 
@@ -244,4 +257,126 @@ test("validateCaptureFile gives immediate type and size feedback", () => {
     }),
   ).toBe("Files must not exceed 10 MiB.");
   expect(validateCaptureFile({ type: "image/png", size: 10 })).toBeNull();
+});
+
+test("review and Plan API calls require a bearer token and use only safe response fields", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input, init) => {
+    requests.push({ input, init });
+    if (String(input).includes("/plans")) {
+      return Response.json({
+        plan: {
+          id: "plan-123",
+          inboxItemId: "item-123",
+          summary: "Renew before the trip.",
+          status: "ready",
+          steps: [
+            {
+              id: "step-123",
+              position: 0,
+              title: "Check requirements",
+              rationale: "Confirm the deadline.",
+              status: "ready",
+              dueOn: null,
+              waitingOn: null,
+              isNextAction: true,
+            },
+          ],
+          createdAt: "2026-07-30T00:00:00Z",
+          updatedAt: "2026-07-30T00:00:00Z",
+        },
+      });
+    }
+    if (String(input).includes("/extract")) {
+      return Response.json({
+        inboxItem: {
+          id: "item-123",
+          sourceType: "text",
+          status: "reviewing",
+          originalText: "Renew passport",
+          originalFilename: null,
+          contentType: null,
+          byteSize: null,
+          suggestions: [],
+          createdAt: "2026-07-30T00:00:00Z",
+          updatedAt: "2026-07-30T00:00:00Z",
+        },
+      });
+    }
+    return Response.json({
+      inboxItem: {
+        id: "item-123",
+        sourceType: "text",
+        status: "reviewing",
+        originalText: "Renew passport",
+        originalFilename: null,
+        contentType: null,
+        byteSize: null,
+        suggestions: [],
+        createdAt: "2026-07-30T00:00:00Z",
+        updatedAt: "2026-07-30T00:00:00Z",
+      },
+    });
+  }) as typeof fetch;
+
+  try {
+    const user = { getIdToken: async () => "firebase-id-token" };
+    await retryExtraction(user, "item-123");
+    await saveSuggestions(user, "item-123", []);
+    const plan = await generatePlan(user, "item-123");
+    await fetchPlan(user, plan.id);
+
+    expect(plan.steps[0]?.isNextAction).toBe(true);
+    expect(requests.map(({ input }) => input)).toEqual([
+      "/api/v1/inbox-items/item-123/extract",
+      "/api/v1/inbox-items/item-123",
+      "/api/v1/inbox-items/item-123/plans",
+      "/api/v1/plans/plan-123",
+    ]);
+    expect(new Headers(requests[1]?.init?.headers).get("Content-Type")).toBe(
+      "application/json",
+    );
+    for (const request of requests) {
+      expect(new Headers(request.init?.headers).get("Authorization")).toBe(
+        "Bearer firebase-id-token",
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("PDF preview rejects a non-PDF response and plan parsing rejects provider identifiers", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response("not a PDF", {
+      headers: { "Content-Type": "text/plain" },
+    })) as unknown as typeof fetch;
+
+  try {
+    await expect(
+      fetchPrivatePdf(
+        { getIdToken: async () => "firebase-id-token" },
+        "item-123",
+      ),
+    ).rejects.toMatchObject({ status: 502 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  expect(() =>
+    parsePlan({
+      plan: {
+        id: "plan-123",
+        inboxItemId: "item-123",
+        summary: "Renew before the trip.",
+        status: "ready",
+        steps: [],
+        createdAt: "2026-07-30T00:00:00Z",
+        updatedAt: "2026-07-30T00:00:00Z",
+        providerFileId: "file-secret",
+      },
+    }),
+  ).toThrow("The Plan response was invalid.");
 });

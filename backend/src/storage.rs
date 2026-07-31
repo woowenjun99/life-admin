@@ -5,6 +5,8 @@ use gcloud_storage::{
     client::{Client, ClientConfig, google_cloud_auth::credentials::CredentialsFile},
     http::objects::{
         delete::DeleteObjectRequest,
+        download::Range,
+        get::GetObjectRequest,
         upload::{Media, UploadObjectRequest, UploadType},
     },
 };
@@ -17,6 +19,7 @@ pub trait PrivateObjectStore: Send + Sync {
         content_type: &str,
         content: &[u8],
     ) -> anyhow::Result<()>;
+    async fn download(&self, object_key: &str) -> anyhow::Result<Vec<u8>>;
     async fn delete(&self, object_key: &str) -> anyhow::Result<()>;
 }
 
@@ -104,6 +107,20 @@ impl PrivateObjectStore for FirebaseStorage {
                 object: object_key.to_owned(),
                 ..Default::default()
             })
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn download(&self, object_key: &str) -> anyhow::Result<Vec<u8>> {
+        self.client
+            .download_object(
+                &GetObjectRequest {
+                    bucket: self.bucket.clone(),
+                    object: object_key.to_owned(),
+                    ..Default::default()
+                },
+                &Range::default(),
+            )
             .await
             .map_err(anyhow::Error::from)
     }

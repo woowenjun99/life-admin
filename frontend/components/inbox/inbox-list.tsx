@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import type { InboxItem } from "@/lib/api";
 
 export type InboxListState =
@@ -101,6 +103,30 @@ export function InboxList({
               <span className="inbox-item-status">
                 {inboxItemStatus(item.status)}
               </span>
+              {item.status === "reviewing" ? (
+                <Link
+                  className="text-link inbox-item-action"
+                  href={`/inbox/${item.id}/review`}
+                >
+                  Review <span aria-hidden="true">→</span>
+                </Link>
+              ) : null}
+              {item.status === "captured" && item.sourceType !== "image" ? (
+                <Link
+                  className="text-link inbox-item-action"
+                  href={`/inbox/${item.id}/review`}
+                >
+                  Retry sorting <span aria-hidden="true">→</span>
+                </Link>
+              ) : null}
+              {item.status === "planned" && item.planId ? (
+                <Link
+                  className="text-link inbox-item-action"
+                  href={`/plans/${item.planId}`}
+                >
+                  Open Plan <span aria-hidden="true">→</span>
+                </Link>
+              ) : null}
             </li>
           ))}
         </ul>

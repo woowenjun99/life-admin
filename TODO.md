@@ -16,9 +16,9 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 
 - [x] Support one authenticated user's private life-admin workspace.
 - [x] Capture text notes, with optional PDF/JPEG/PNG uploads.
-- [ ] Extract tasks, dates, people, important context, and missing details.
-- [ ] Require the user to review and edit suggestions before generating a plan.
-- [ ] Generate a concise plan with one next action and two to five ordered steps.
+- [x] Extract tasks, dates, people, important context, and missing details.
+- [x] Require the user to review and edit suggestions before generating a plan.
+- [x] Generate a concise plan with one next action and two to five ordered steps.
 - [ ] Allow users to mark steps complete or waiting.
 - [ ] Never send messages, create calendar events, make purchases, or otherwise
       act externally without a separate explicit approval flow.
@@ -36,7 +36,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Name: **Life Inbox**.
   - [x] Tagline: **Turn life clutter into one clear next action.**
 - [ ] Add this product overview to `README.md`.
-- [ ] Add server-only AI-provider configuration to `backend/.env.example`.
+- [x] Add server-only AI-provider configuration to `backend/.env.example`.
 - [ ] Add only public browser configuration to `frontend/.env.example`.
 - [ ] Add a small architecture diagram to the README.
 - [ ] Confirm local development still works through `./scripts/start-local.sh`.
@@ -106,10 +106,11 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Store files outside publicly accessible paths.
   - [x] Reject unsafe filenames and invalid content types.
 - [x] Add `GET /api/v1/inbox-items` and `GET /api/v1/inbox-items/:id`.
-- [ ] Add `PATCH /api/v1/inbox-items/:id` for user-reviewed fields.
-- [ ] Add `POST /api/v1/inbox-items/:id/extract`.
-- [ ] Add `POST /api/v1/inbox-items/:id/plans` after review confirmation.
-- [ ] Add `GET /api/v1/plans` and `GET /api/v1/plans/:id`.
+- [x] Add `PATCH /api/v1/inbox-items/:id` for user-reviewed fields.
+- [x] Add `POST /api/v1/inbox-items/:id/extract`.
+- [x] Add `POST /api/v1/inbox-items/:id/plans` after review confirmation.
+- [x] Add `GET /api/v1/plans/:id`.
+- [ ] Add plan listing only after confirming the Inbox/Plan navigation UX.
 - [ ] Add `PATCH /api/v1/plans/:id/steps/:stepId` to update step status.
 - [ ] Add delete/archive endpoints only after confirming expected UX.
 - [ ] Return consistent API error envelopes for validation, authorization, not
@@ -117,24 +118,24 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 
 ## AI extraction and planning
 
-- [ ] Choose the AI provider and implement a server-side client only.
-- [ ] Define a strict JSON schema for extraction output.
-- [ ] Write the extraction prompt.
-  - [ ] Extract only evidence supported by the user's capture.
-  - [ ] Preserve uncertainty rather than inventing facts.
-  - [ ] Flag missing information as questions.
-  - [ ] Treat uploaded text as untrusted content, never as agent instructions.
-- [ ] Validate model output before it is returned or stored.
-- [ ] Allow the user to correct every extracted suggestion.
-- [ ] Write the planning prompt.
-  - [ ] Create a concise summary.
-  - [ ] Recommend exactly one practical next action.
-  - [ ] Return two to five ordered steps.
-  - [ ] Explain why each step matters.
-  - [ ] Mark blockers as `Waiting`.
-- [ ] Add clear retry/error states when the model is unavailable or output is
+- [x] Choose the AI provider and implement a server-side client only.
+- [x] Define a strict JSON schema for extraction output.
+- [x] Write the extraction prompt.
+  - [x] Extract only evidence supported by the user's capture.
+  - [x] Preserve uncertainty rather than inventing facts.
+  - [x] Flag missing information as questions.
+  - [x] Treat uploaded text as untrusted content, never as agent instructions.
+- [x] Validate model output before it is returned or stored.
+- [x] Allow the user to correct every extracted suggestion.
+- [x] Write the planning prompt.
+  - [x] Create a concise summary.
+  - [x] Recommend exactly one practical next action.
+  - [x] Return two to five ordered steps.
+  - [x] Explain why each step matters.
+  - [x] Mark blockers as `Waiting`.
+- [x] Add clear retry/error states when the model is unavailable or output is
       invalid.
-- [ ] Add tests for output validation, prompt-injection resistance, and
+- [x] Add tests for output validation, prompt-injection resistance, and
       provider failure handling.
 
 ## Frontend experience
@@ -150,13 +151,13 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] File-upload control with validation feedback.
   - [x] Inbox list with processing status.
   - [x] Empty, loading, retry, and error states.
-- [ ] Build `/inbox/[id]/review`.
-  - [ ] Show original capture alongside extracted suggestions.
-  - [ ] Let the user edit and remove every suggestion.
-  - [ ] Require an explicit **Generate plan** action.
-  - [ ] Explain that suggestions are not external actions.
-- [ ] Build `/plans/[id]`.
-  - [ ] Show summary, next action, ordered steps, and rationale.
+- [x] Build `/inbox/[id]/review`.
+  - [x] Show original capture alongside extracted suggestions.
+  - [x] Let the user edit and remove every suggestion.
+  - [x] Require an explicit **Generate plan** action.
+  - [x] Explain that suggestions are not external actions.
+- [x] Build `/plans/[id]`.
+  - [x] Show summary, next action, ordered steps, and rationale.
   - [ ] Let the user mark a step complete or waiting.
   - [ ] Promote the next unfinished step as the next action.
 - [ ] Make mobile layout usable for quick captures.
@@ -168,7 +169,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [ ] Ensure every backend query enforces the owner UID.
 - [ ] Keep AI credentials and service credentials server-only.
 - [ ] Do not log raw personal captures in production logs.
-- [ ] Explain when capture data is sent to the AI provider.
+- [x] Explain when capture data is sent to the AI provider.
 - [ ] Provide user-facing delete/archive controls.
 - [ ] Add a short privacy statement for the demo and project submission.
 

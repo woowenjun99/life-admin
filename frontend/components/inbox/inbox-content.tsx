@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth/auth-provider";
-import { fetchInboxItems } from "@/lib/api";
+import { type CaptureResult, fetchInboxItems } from "@/lib/api";
 
 import { CaptureForms } from "./capture-forms";
 import { InboxList, type InboxListState } from "./inbox-list";
@@ -38,7 +38,9 @@ export function InboxContent() {
 
   return (
     <>
-      <CaptureForms onCaptured={() => void loadInboxItems()} />
+      <CaptureForms
+        onCaptured={(_result: CaptureResult) => void loadInboxItems()}
+      />
       <InboxList onRetry={loadInboxItems} state={state} />
     </>
   );

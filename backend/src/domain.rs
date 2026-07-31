@@ -1,6 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureSourceType {
     Text,
@@ -19,7 +19,7 @@ impl CaptureSourceType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxStatus {
     Captured,
@@ -51,7 +51,7 @@ impl InboxStatus {
 }
 
 #[allow(dead_code)] // Persisted now; consumed by the later plan routes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanStatus {
     Ready,
@@ -61,6 +61,15 @@ pub enum PlanStatus {
 
 #[allow(dead_code)] // Enforced by the later plan update routes.
 impl PlanStatus {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ready" => Some(Self::Ready),
+            "waiting" => Some(Self::Waiting),
+            "complete" => Some(Self::Complete),
+            _ => None,
+        }
+    }
+
     pub fn can_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),

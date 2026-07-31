@@ -10,6 +10,9 @@ pub struct Config {
     pub firebase_project_id: String,
     pub firebase_service_account_json: Option<String>,
     pub firebase_storage_bucket: String,
+    pub openai_api_key: Option<String>,
+    pub openai_base_url: String,
+    pub openai_model: String,
 }
 
 impl Config {
@@ -36,6 +39,10 @@ impl Config {
             firebase_project_id: required("FIREBASE_PROJECT_ID")?,
             firebase_service_account_json: optional("FIREBASE_SERVICE_ACCOUNT_JSON"),
             firebase_storage_bucket: required("FIREBASE_STORAGE_BUCKET")?,
+            openai_api_key: optional("OPENAI_API_KEY"),
+            openai_base_url: env::var("OPENAI_BASE_URL")
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_owned()),
+            openai_model: env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.6-terra".to_owned()),
         })
     }
 }

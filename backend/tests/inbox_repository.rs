@@ -174,14 +174,13 @@ async fn sqlx_repository_updates_owned_plan_steps_and_derives_plan_state() {
             .status,
         PlanStatus::Complete
     );
-    assert_eq!(
+    assert!(
         completed
             .steps
             .iter()
             .find(|step| step.id == second_step_id)
             .expect("second step should remain in the Plan")
-            .is_next_action,
-        true
+            .is_next_action
     );
 
     let UpdatePlanStepResult::Updated(waiting) = repository
@@ -257,6 +256,122 @@ async fn sqlx_repository_updates_owned_plan_steps_and_derives_plan_state() {
         .execute(&database)
         .await
         .expect("owned fixture should clean up");
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL for an isolated PostgreSQL database"]
+async fn sqlx_repository_lists_only_owned_plans_with_ordered_steps() {
+    let database = test_database().await;
+    let repository = SqlxInboxRepository::new(database.clone());
+    let owner_uid = format!("plan-list-owner-{}", Uuid::new_v4());
+    let other_owner_uid = format!("plan-list-other-{}", Uuid::new_v4());
+    let older_item_id = Uuid::new_v4();
+    let newer_item_id = Uuid::new_v4();
+    let foreign_item_id = Uuid::new_v4();
+    let older_plan_id = Uuid::new_v4();
+    let newer_plan_id = Uuid::new_v4();
+    let foreign_plan_id = Uuid::new_v4();
+    let newer_second_step_id = Uuid::new_v4();
+
+    sqlx::query(
+        r#"
+        INSERT INTO inbox_items (id, owner_uid, source_type, original_text, status)
+        VALUES
+            ($1, $2, 'text', 'Older private note', 'planned'),
+            ($3, $2, 'text', 'Newer private note', 'planned'),
+            ($4, $5, 'text', 'Another persons note', 'planned')
+        "#,
+    )
+    .bind(older_item_id)
+    .bind(&owner_uid)
+    .bind(newer_item_id)
+    .bind(foreign_item_id)
+    .bind(&other_owner_uid)
+    .execute(&database)
+    .await
+    .expect("test Inbox items should insert");
+    sqlx::query(
+        r#"
+        INSERT INTO plans (id, inbox_item_id, summary, status, created_at, updated_at)
+        VALUES
+            ($1, $2, 'Older private Plan', 'ready', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+            ($3, $4, 'Newer private Plan', 'ready', '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
+            ($5, $6, 'Another persons Plan', 'ready', '2026-01-03T00:00:00Z', '2026-01-03T00:00:00Z')
+        "#,
+    )
+    .bind(older_plan_id)
+    .bind(older_item_id)
+    .bind(newer_plan_id)
+    .bind(newer_item_id)
+    .bind(foreign_plan_id)
+    .bind(foreign_item_id)
+    .execute(&database)
+    .await
+    .expect("test Plans should insert");
+    sqlx::query(
+        r#"
+        INSERT INTO plan_steps (id, plan_id, position, title, rationale, status, is_next_action, updated_at)
+        VALUES
+            ($1, $2, 0, 'Older step', 'Keeps the older Plan private.', 'ready', true, '2026-01-01T00:00:00Z'),
+            ($3, $4, 1, 'Newer second step', 'Proves ordered steps.', 'ready', false, '2026-01-02T00:00:00Z'),
+            ($5, $4, 0, 'Newer first step', 'Proves ordered steps.', 'ready', true, '2026-01-03T00:00:00Z'),
+            ($6, $7, 0, 'Foreign step', 'Must never be listed.', 'ready', true, '2026-01-03T00:00:00Z')
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(older_plan_id)
+    .bind(newer_second_step_id)
+    .bind(newer_plan_id)
+    .bind(Uuid::new_v4())
+    .bind(foreign_plan_id)
+    .execute(&database)
+    .await
+    .expect("test Plan steps should insert");
+
+    let listed = repository
+        .list_plans(&owner_uid)
+        .await
+        .expect("owner Plan list should succeed");
+    assert_eq!(
+        listed.iter().map(|plan| plan.id).collect::<Vec<_>>(),
+        [newer_plan_id, older_plan_id]
+    );
+    assert_eq!(
+        listed[0]
+            .steps
+            .iter()
+            .map(|step| step.position)
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
+    assert_eq!(listed[0].steps[1].id, newer_second_step_id);
+    assert_eq!(
+        listed[0].steps[0].updated_at,
+        time::OffsetDateTime::from_unix_timestamp(1_767_398_400).unwrap()
+    );
+
+    let other_owner_plans = repository
+        .list_plans(&other_owner_uid)
+        .await
+        .expect("other owner Plan list should succeed");
+    assert_eq!(
+        other_owner_plans
+            .iter()
+            .map(|plan| plan.id)
+            .collect::<Vec<_>>(),
+        [foreign_plan_id]
+    );
+
+    sqlx::query("DELETE FROM plans WHERE inbox_item_id = ANY($1)")
+        .bind(vec![older_item_id, newer_item_id, foreign_item_id])
+        .execute(&database)
+        .await
+        .expect("test Plans should clean up");
+    sqlx::query("DELETE FROM inbox_items WHERE id = ANY($1)")
+        .bind(vec![older_item_id, newer_item_id, foreign_item_id])
+        .execute(&database)
+        .await
+        .expect("test Inbox items should clean up");
 }
 
 struct CleanupProvider {

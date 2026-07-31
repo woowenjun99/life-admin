@@ -110,7 +110,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [x] Add `POST /api/v1/inbox-items/:id/extract`.
 - [x] Add `POST /api/v1/inbox-items/:id/plans` after review confirmation.
 - [x] Add `GET /api/v1/plans/:id`.
-- [ ] Add plan listing only after confirming the Inbox/Plan navigation UX.
+- [x] Add plan listing after confirming the Inbox/Plan navigation UX.
 - [x] Add `PATCH /api/v1/plans/:id/steps/:stepId` to update step status.
 - [ ] Add delete/archive endpoints only after confirming expected UX.
 - [ ] Return consistent API error envelopes for validation, authorization, not
@@ -140,11 +140,11 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 
 ## Frontend experience
 
-- [ ] Create shared authenticated API client and loading/error UI primitives.
-- [ ] Build `/today`.
-  - [ ] Show the recommended next action.
-  - [ ] Show plans waiting on someone or something.
-  - [ ] Show recently completed steps.
+- [x] Create shared authenticated API client and loading/error UI primitives.
+- [x] Build `/today`.
+  - [x] Show the recommended next action.
+  - [x] Show plans waiting on someone or something.
+  - [x] Show recently completed steps.
   - [x] Add a prominent capture entry point.
 - [x] Build Inbox capture on `/today`.
   - [x] Text capture form.
@@ -160,6 +160,10 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Show summary, next action, ordered steps, and rationale.
   - [x] Let the user mark a step complete or waiting.
   - [x] Promote the next unfinished ready step as the next action.
+- [ ] Add an explicit **Revise Plan** flow for planned items.
+  - [ ] Let the user return to the suggestion editor and make changes.
+  - [ ] Require confirmation before replacing or versioning the approved Plan;
+        never silently change its existing steps.
 - [ ] Make mobile layout usable for quick captures.
 - [ ] Add accessible labels, keyboard navigation, and visible focus states.
 

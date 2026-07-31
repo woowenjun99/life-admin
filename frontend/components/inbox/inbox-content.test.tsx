@@ -3,10 +3,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { InboxList, inboxItemLabel } from "./inbox-list";
 
-test("inbox item labels do not reveal capture content", () => {
-  expect(inboxItemLabel("text")).toBe("Text capture");
-  expect(inboxItemLabel("image")).toBe("Image capture");
-  expect(inboxItemLabel("pdf")).toBe("PDF capture");
+test("Inbox labels use the approved Plan summary without revealing capture text", () => {
+  expect(
+    inboxItemLabel({
+      sourceType: "text",
+      planSummary: "Renew your passport before travelling.",
+    }),
+  ).toBe("Renew your passport before travelling.");
+  expect(inboxItemLabel({ sourceType: "text" })).toBe("Text capture");
+  expect(inboxItemLabel({ sourceType: "image" })).toBe("Image capture");
+  expect(inboxItemLabel({ sourceType: "pdf" })).toBe("PDF capture");
 });
 
 test("Inbox list renders loading, empty, retry, and status states", () => {

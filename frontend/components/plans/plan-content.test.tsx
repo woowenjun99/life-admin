@@ -24,10 +24,11 @@ function step(status: PlanStep["status"], isNextAction = false): PlanStep {
     dueOn: undefined,
     waitingOn: status === "waiting" ? "A reply from the agency" : undefined,
     isNextAction,
+    updatedAt: "2026-07-31T00:00:00Z",
   };
 }
 
-test("Plan step controls expose Complete and Waiting actions with a labelled reason", () => {
+test("Plan step controls keep the status pill and actions in one aligned aside", () => {
   const markup = renderToStaticMarkup(
     <PlanStepControls
       {...handlers}
@@ -38,6 +39,9 @@ test("Plan step controls expose Complete and Waiting actions with a labelled rea
     />,
   );
 
+  expect(markup).toContain('class="plan-step-aside"');
+  expect(markup).toContain('class="plan-step-status"');
+  expect(markup).toContain("Next action");
   expect(markup).toContain("Mark waiting");
   expect(markup).toContain("Mark complete");
   expect(markup).toContain('for="waiting-on-step-123"');
@@ -58,17 +62,17 @@ test("Plan step controls represent Waiting and completed steps accurately", () =
   );
   expect(waitingMarkup).toContain("Make ready");
   expect(waitingMarkup).toContain("Mark complete");
-  expect(
-    renderToStaticMarkup(
-      <PlanStepControls
-        {...handlers}
-        isSaving={false}
-        step={step("complete")}
-        waitingOn=""
-        waitingOpen={false}
-      />,
-    ),
-  ).toBe("");
+  const completeMarkup = renderToStaticMarkup(
+    <PlanStepControls
+      {...handlers}
+      isSaving={false}
+      step={step("complete")}
+      waitingOn=""
+      waitingOpen={false}
+    />,
+  );
+  expect(completeMarkup).toContain("Complete");
+  expect(completeMarkup).not.toContain("Mark complete");
   expect(planStepStatusLabel(step("ready", true))).toBe("Next action");
   expect(planStepStatusLabel(step("waiting"))).toBe("Waiting");
   expect(planStepStatusLabel(step("complete"))).toBe("Complete");

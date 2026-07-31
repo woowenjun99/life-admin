@@ -6,12 +6,14 @@ import {
   fetchInboxItem,
   fetchInboxItems,
   fetchPlan,
+  fetchPlans,
   fetchPrivatePdf,
   generatePlan,
   parseCurrentUser,
   parseInboxItemDetail,
   parseInboxItems,
   parsePlan,
+  parsePlans,
   retryExtraction,
   saveSuggestions,
   updatePlanStep,
@@ -289,6 +291,7 @@ test("review and Plan API calls require a bearer token and use only safe respons
               dueOn: null,
               waitingOn: null,
               isNextAction: true,
+              updatedAt: "2026-07-30T00:00:00Z",
             },
           ],
           createdAt: "2026-07-30T00:00:00Z",
@@ -378,6 +381,7 @@ test("updatePlanStep sends the complete status change and preserves API errors",
             dueOn: null,
             waitingOn: "A reply from the agency",
             isNextAction: false,
+            updatedAt: "2026-07-31T00:00:00Z",
           },
         ],
         createdAt: "2026-07-30T00:00:00Z",
@@ -433,6 +437,82 @@ test("updatePlanStep sends the complete status change and preserves API errors",
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("fetchPlans uses a bearer token and rejects malformed step timestamps", async () => {
+  const originalFetch = globalThis.fetch;
+  let request: { input: RequestInfo | URL; init?: RequestInit } | undefined;
+  globalThis.fetch = (async (input, init) => {
+    request = { input, init };
+    return Response.json({
+      plans: [
+        {
+          id: "plan-123",
+          inboxItemId: "item-123",
+          summary: "Renew before the trip.",
+          status: "ready",
+          steps: [
+            {
+              id: "step-123",
+              position: 0,
+              title: "Check requirements",
+              rationale: "Confirm the deadline.",
+              status: "ready",
+              dueOn: null,
+              waitingOn: null,
+              isNextAction: true,
+              updatedAt: "2026-07-31T00:00:00Z",
+            },
+          ],
+          createdAt: "2026-07-30T00:00:00Z",
+          updatedAt: "2026-07-31T00:00:00Z",
+        },
+      ],
+    });
+  }) as typeof fetch;
+
+  try {
+    const plans = await fetchPlans({
+      getIdToken: async () => "firebase-id-token",
+    });
+
+    expect(plans[0]?.steps[0]?.updatedAt).toBe("2026-07-31T00:00:00Z");
+    expect(request?.input).toBe("/api/v1/plans");
+    expect(request?.init?.cache).toBe("no-store");
+    expect(new Headers(request?.init?.headers).get("Authorization")).toBe(
+      "Bearer firebase-id-token",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  expect(() =>
+    parsePlans({
+      plans: [
+        {
+          id: "plan-123",
+          inboxItemId: "item-123",
+          summary: "Renew before the trip.",
+          status: "ready",
+          steps: [
+            {
+              id: "step-123",
+              position: 0,
+              title: "Check requirements",
+              rationale: "Confirm the deadline.",
+              status: "ready",
+              dueOn: null,
+              waitingOn: null,
+              isNextAction: true,
+              updatedAt: 123,
+            },
+          ],
+          createdAt: "2026-07-30T00:00:00Z",
+          updatedAt: "2026-07-31T00:00:00Z",
+        },
+      ],
+    }),
+  ).toThrow("The Plans response was invalid.");
 });
 
 test("PDF preview rejects a non-PDF response and plan parsing rejects provider identifiers", async () => {

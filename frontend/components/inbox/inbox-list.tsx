@@ -4,12 +4,19 @@ import Link from "next/link";
 
 import type { InboxItem } from "@/lib/api";
 
+export type InboxListItem = InboxItem & { planSummary?: string };
+
 export type InboxListState =
   | { status: "loading" }
-  | { status: "ready"; items: InboxItem[] }
+  | { status: "ready"; items: InboxListItem[] }
   | { status: "error" };
 
-export function inboxItemLabel(sourceType: InboxItem["sourceType"]): string {
+export function inboxItemLabel({
+  planSummary,
+  sourceType,
+}: Pick<InboxListItem, "planSummary" | "sourceType">): string {
+  if (planSummary) return planSummary;
+
   switch (sourceType) {
     case "text":
       return "Text capture";
@@ -93,9 +100,7 @@ export function InboxList({
           {state.items.map((item) => (
             <li className="inbox-item-card" key={item.id}>
               <div>
-                <p className="inbox-item-label">
-                  {inboxItemLabel(item.sourceType)}
-                </p>
+                <p className="inbox-item-label">{inboxItemLabel(item)}</p>
                 <time dateTime={item.createdAt}>
                   Captured {capturedAt(item.createdAt)}
                 </time>

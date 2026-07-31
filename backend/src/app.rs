@@ -68,6 +68,7 @@ pub fn router(state: AppState) -> Router {
             get(get_inbox_item_pdf),
         )
         .route("/api/v1/inbox-items/{item_id}/plans", post(create_plan))
+        .route("/api/v1/plans", get(list_plans))
         .route("/api/v1/plans/{plan_id}", get(get_plan))
         .route(
             "/api/v1/plans/{plan_id}/steps/{step_id}",
@@ -498,6 +499,19 @@ async fn get_plan(
         Err(error) => {
             tracing::error!(%error, "could not load Plan");
             internal_error_response("Could not load the plan.")
+        }
+    }
+}
+
+async fn list_plans(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    match state.inbox_repository.list_plans(&user.uid).await {
+        Ok(plans) => (StatusCode::OK, Json(PlansResponse::from(plans))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "could not list Plans");
+            internal_error_response("Could not load Plans.")
         }
     }
 }
@@ -1063,6 +1077,20 @@ struct PlanResponse {
     plan: PlanDetailResponse,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlansResponse {
+    plans: Vec<PlanDetailResponse>,
+}
+
+impl From<Vec<Plan>> for PlansResponse {
+    fn from(plans: Vec<Plan>) -> Self {
+        Self {
+            plans: plans.iter().map(PlanDetailResponse::from).collect(),
+        }
+    }
+}
+
 impl From<&Plan> for PlanResponse {
     fn from(plan: &Plan) -> Self {
         Self {
@@ -1108,6 +1136,7 @@ struct PlanStepResponse {
     due_on: Option<String>,
     waiting_on: Option<String>,
     is_next_action: bool,
+    updated_at: String,
 }
 
 impl From<&PlanStep> for PlanStepResponse {
@@ -1121,6 +1150,7 @@ impl From<&PlanStep> for PlanStepResponse {
             due_on: step.due_on.map(format_date),
             waiting_on: step.waiting_on.clone(),
             is_next_action: step.is_next_action,
+            updated_at: format_timestamp(step.updated_at),
         }
     }
 }
@@ -1415,6 +1445,7 @@ mod tests {
                         due_on: step.due_on,
                         waiting_on: step.waiting_on.clone(),
                         is_next_action: position == 0,
+                        updated_at: OffsetDateTime::UNIX_EPOCH,
                     })
                     .collect(),
             };
@@ -1434,6 +1465,24 @@ mod tests {
                 .get(&plan_id)
                 .filter(|(owner, _)| owner == owner_uid)
                 .map(|(_, plan)| plan.clone()))
+        }
+
+        async fn list_plans(&self, owner_uid: &str) -> anyhow::Result<Vec<Plan>> {
+            let mut plans = self
+                .plans
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|(owner, _)| owner == owner_uid)
+                .map(|(_, plan)| plan.clone())
+                .collect::<Vec<_>>();
+            plans.sort_by(|left, right| {
+                right
+                    .updated_at
+                    .cmp(&left.updated_at)
+                    .then_with(|| right.id.cmp(&left.id))
+            });
+            Ok(plans)
         }
 
         async fn update_plan_step(
@@ -1458,6 +1507,7 @@ mod tests {
             }
             step.status = update.status;
             step.waiting_on = update.waiting_on.clone();
+            step.updated_at = OffsetDateTime::now_utc();
 
             let states = plan
                 .steps
@@ -1580,6 +1630,7 @@ mod tests {
             due_on: None,
             waiting_on: None,
             is_next_action,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
         }
     }
 
@@ -1981,6 +2032,101 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(foreign_response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn plan_listing_requires_authentication_and_returns_only_ordered_owner_plans() {
+        let older_plan_id = Uuid::new_v4();
+        let newer_plan_id = Uuid::new_v4();
+        let foreign_plan_id = Uuid::new_v4();
+        let repository = Arc::new(WorkflowInboxRepository::default());
+        for (owner_uid, plan_id, summary, status, updated_at) in [
+            (
+                "user-123",
+                older_plan_id,
+                "Older private Plan",
+                PlanStatus::Ready,
+                OffsetDateTime::from_unix_timestamp(1).unwrap(),
+            ),
+            (
+                "user-123",
+                newer_plan_id,
+                "Newer private Plan",
+                PlanStatus::Waiting,
+                OffsetDateTime::from_unix_timestamp(2).unwrap(),
+            ),
+            (
+                "other-user",
+                foreign_plan_id,
+                "Another person's Plan",
+                PlanStatus::Ready,
+                OffsetDateTime::from_unix_timestamp(3).unwrap(),
+            ),
+        ] {
+            repository.insert_plan(
+                owner_uid,
+                Plan {
+                    id: plan_id,
+                    inbox_item_id: Uuid::new_v4(),
+                    summary: summary.to_owned(),
+                    status,
+                    created_at: OffsetDateTime::UNIX_EPOCH,
+                    updated_at,
+                    steps: vec![plan_step(
+                        Uuid::new_v4(),
+                        0,
+                        status,
+                        status == PlanStatus::Ready,
+                    )],
+                },
+            );
+        }
+        let app = workflow_app(repository, Arc::new(DisabledAiProvider));
+
+        let unauthenticated = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/plans")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let listed = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri("/api/v1/plans")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        assert_eq!(listed["plans"].as_array().unwrap().len(), 2);
+        assert_eq!(listed["plans"][0]["id"], newer_plan_id.to_string());
+        assert_eq!(listed["plans"][1]["id"], older_plan_id.to_string());
+        assert!(listed["plans"][0]["steps"][0]["updatedAt"].is_string());
+        assert!(!listed.to_string().contains("Another person's Plan"));
+
+        let foreign = app
+            .oneshot(other_user(
+                Request::builder()
+                    .uri("/api/v1/plans")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(foreign).await["plans"][0]["id"],
+            foreign_plan_id.to_string()
+        );
     }
 
     #[tokio::test]

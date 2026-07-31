@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth/auth-provider";
-import { type CaptureResult, fetchInboxItems } from "@/lib/api";
+import { type CaptureResult, fetchInboxItems, type Plan } from "@/lib/api";
 
 import { CaptureForms } from "./capture-forms";
 import { InboxList, type InboxListState } from "./inbox-list";
 
-export function InboxContent() {
+export function InboxContent({ plans = [] }: { plans?: Plan[] }) {
   const { user } = useAuth();
   const [state, setState] = useState<InboxListState>({ status: "loading" });
   const currentRequest = useRef(0);
@@ -36,12 +36,26 @@ export function InboxContent() {
     void loadInboxItems();
   }, [loadInboxItems]);
 
+  const planSummaries = new Map(
+    plans.map((plan) => [plan.inboxItemId, plan.summary]),
+  );
+  const listState =
+    state.status === "ready"
+      ? {
+          status: "ready" as const,
+          items: state.items.map((item) => {
+            const planSummary = planSummaries.get(item.id);
+            return planSummary ? { ...item, planSummary } : item;
+          }),
+        }
+      : state;
+
   return (
     <>
       <CaptureForms
         onCaptured={(_result: CaptureResult) => void loadInboxItems()}
       />
-      <InboxList onRetry={loadInboxItems} state={state} />
+      <InboxList onRetry={loadInboxItems} state={listState} />
     </>
   );
 }

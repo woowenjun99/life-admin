@@ -5,7 +5,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { fetchPlan, type Plan, type PlanStep, updatePlanStep } from "@/lib/api";
-import { PlanStepControls, planStepStatusLabel } from "./plan-step-controls";
+import { PlanStepControls } from "./plan-step-controls";
 
 export function PlanContent({ planId }: { planId: string }) {
   const { user } = useAuth();
@@ -102,7 +102,7 @@ export function PlanContent({ planId }: { planId: string }) {
           <h1>One clear next action.</h1>
         </div>
         <Link className="text-link" href="/today">
-          Back to Inbox <span aria-hidden="true">←</span>
+          Back to Today <span aria-hidden="true">←</span>
         </Link>
       </div>
       <p className="plan-summary">{plan.summary}</p>
@@ -145,7 +145,7 @@ export function PlanContent({ planId }: { planId: string }) {
             }
             key={step.id}
           >
-            <div>
+            <div className="plan-step-copy">
               <p className="plan-step-title">{step.title}</p>
               <p>{step.rationale}</p>
               {step.dueOn ? (
@@ -154,9 +154,6 @@ export function PlanContent({ planId }: { planId: string }) {
               {step.waitingOn ? (
                 <p className="plan-step-meta">Waiting on {step.waitingOn}</p>
               ) : null}
-            </div>
-            <div className="plan-step-status">
-              <span>{planStepStatusLabel(step)}</span>
             </div>
             <PlanStepControls
               isSaving={isSaving}

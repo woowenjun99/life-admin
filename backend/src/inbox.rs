@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
@@ -118,6 +120,7 @@ pub struct PlanStep {
     pub due_on: Option<Date>,
     pub waiting_on: Option<String>,
     pub is_next_action: bool,
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,6 +197,10 @@ pub trait InboxRepository: Send + Sync {
         anyhow::bail!("plan retrieval is not implemented")
     }
 
+    async fn list_plans(&self, _owner_uid: &str) -> anyhow::Result<Vec<Plan>> {
+        anyhow::bail!("plan listing is not implemented")
+    }
+
     async fn update_plan_step(
         &self,
         _owner_uid: &str,
@@ -213,6 +220,29 @@ pub struct SqlxInboxRepository {
 impl SqlxInboxRepository {
     pub fn new(database: PgPool) -> Self {
         Self { database }
+    }
+
+    async fn plan_steps(&self, plan_ids: &[Uuid]) -> anyhow::Result<HashMap<Uuid, Vec<PlanStep>>> {
+        if plan_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let rows = sqlx::query_as::<_, PlanStepRow>(
+            "SELECT plan_id, id, position, title, rationale, status, due_on, waiting_on, is_next_action, updated_at FROM plan_steps WHERE plan_id = ANY($1) ORDER BY plan_id ASC, position ASC",
+        )
+        .bind(plan_ids)
+        .fetch_all(&self.database)
+        .await?;
+
+        let mut steps_by_plan = HashMap::new();
+        for row in rows {
+            let plan_id = row.plan_id;
+            steps_by_plan
+                .entry(plan_id)
+                .or_insert_with(Vec::new)
+                .push(row.try_into()?);
+        }
+        Ok(steps_by_plan)
     }
 
     async fn suggestions(&self, owner_uid: &str, item_id: Uuid) -> anyhow::Result<Vec<Suggestion>> {
@@ -363,6 +393,7 @@ struct PlanRow {
 
 #[derive(FromRow)]
 struct PlanStepRow {
+    plan_id: Uuid,
     id: Uuid,
     position: i32,
     title: String,
@@ -371,6 +402,7 @@ struct PlanStepRow {
     due_on: Option<Date>,
     waiting_on: Option<String>,
     is_next_action: bool,
+    updated_at: OffsetDateTime,
 }
 
 #[derive(FromRow)]
@@ -394,6 +426,7 @@ impl TryFrom<PlanStepRow> for PlanStep {
             due_on: row.due_on,
             waiting_on: row.waiting_on,
             is_next_action: row.is_next_action,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -607,15 +640,11 @@ impl InboxRepository for SqlxInboxRepository {
         .fetch_optional(&self.database)
         .await?;
         let Some(row) = row else { return Ok(None) };
-        let steps = sqlx::query_as::<_, PlanStepRow>(
-            "SELECT id, position, title, rationale, status, due_on, waiting_on, is_next_action FROM plan_steps WHERE plan_id = $1 ORDER BY position ASC",
-        )
-        .bind(plan_id)
-        .fetch_all(&self.database)
-        .await?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        let steps = self
+            .plan_steps(&[plan_id])
+            .await?
+            .remove(&plan_id)
+            .unwrap_or_default();
         Ok(Some(Plan {
             id: row.id,
             inbox_item_id: row.inbox_item_id,
@@ -626,6 +655,32 @@ impl InboxRepository for SqlxInboxRepository {
             updated_at: row.updated_at,
             steps,
         }))
+    }
+
+    async fn list_plans(&self, owner_uid: &str) -> anyhow::Result<Vec<Plan>> {
+        let rows = sqlx::query_as::<_, PlanRow>(
+            "SELECT p.id, p.inbox_item_id, p.summary, p.status, p.created_at, p.updated_at FROM plans p INNER JOIN inbox_items i ON i.id = p.inbox_item_id WHERE i.owner_uid = $1 ORDER BY p.updated_at DESC, p.id DESC",
+        )
+        .bind(owner_uid)
+        .fetch_all(&self.database)
+        .await?;
+        let plan_ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+        let mut steps_by_plan = self.plan_steps(&plan_ids).await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(Plan {
+                    id: row.id,
+                    inbox_item_id: row.inbox_item_id,
+                    summary: row.summary,
+                    status: PlanStatus::parse(&row.status)
+                        .ok_or_else(|| anyhow::anyhow!("plan has an invalid status"))?,
+                    created_at: row.created_at,
+                    updated_at: row.updated_at,
+                    steps: steps_by_plan.remove(&row.id).unwrap_or_default(),
+                })
+            })
+            .collect()
     }
 
     async fn update_plan_step(

@@ -53,6 +53,7 @@ export type PlanStep = {
   dueOn?: string;
   waitingOn?: string;
   isNextAction: boolean;
+  updatedAt: string;
 };
 
 export type PlanStepUpdate = {
@@ -270,6 +271,17 @@ export async function fetchPlan(
   return parsePlan(await response.json());
 }
 
+export async function fetchPlans(user: IdTokenSource): Promise<Plan[]> {
+  const response = await fetch("/api/v1/plans", {
+    cache: "no-store",
+    headers: await authorizationHeaders(user),
+  });
+  if (!response.ok) {
+    throw await responseError(response, "We could not load your Plans.");
+  }
+  return parsePlans(await response.json());
+}
+
 export async function updatePlanStep(
   user: IdTokenSource,
   planId: string,
@@ -389,8 +401,25 @@ export function parsePlan(payload: unknown): Plan {
   if (!isRecord(payload) || !isRecord(payload.plan)) {
     throw invalid("The Plan response was invalid.");
   }
-  const plan = payload.plan;
+  return parsePlanValue(payload.plan);
+}
+
+export function parsePlans(payload: unknown): Plan[] {
+  if (!isRecord(payload) || !Array.isArray(payload.plans)) {
+    throw invalid("The Plans response was invalid.");
+  }
+  return payload.plans.map((plan) => {
+    try {
+      return parsePlanValue(plan);
+    } catch {
+      throw invalid("The Plans response was invalid.");
+    }
+  });
+}
+
+function parsePlanValue(plan: unknown): Plan {
   if (
+    !isRecord(plan) ||
     !Object.keys(plan).every((key) =>
       [
         "id",
@@ -528,6 +557,7 @@ function parsePlanStep(value: unknown): PlanStep {
         "dueOn",
         "waitingOn",
         "isNextAction",
+        "updatedAt",
       ].includes(key),
     ) ||
     typeof value.id !== "string" ||
@@ -538,7 +568,8 @@ function parsePlanStep(value: unknown): PlanStep {
     !isPlanStatus(value.status) ||
     !(typeof value.dueOn === "string" || value.dueOn === null) ||
     !(typeof value.waitingOn === "string" || value.waitingOn === null) ||
-    typeof value.isNextAction !== "boolean"
+    typeof value.isNextAction !== "boolean" ||
+    typeof value.updatedAt !== "string"
   ) {
     throw invalid("The Plan response was invalid.");
   }
@@ -551,6 +582,7 @@ function parsePlanStep(value: unknown): PlanStep {
     dueOn: value.dueOn ?? undefined,
     waitingOn: value.waitingOn ?? undefined,
     isNextAction: value.isNextAction,
+    updatedAt: value.updatedAt,
   };
 }
 

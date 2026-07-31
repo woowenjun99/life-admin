@@ -9,7 +9,9 @@ test("captureErrorMessage keeps private file-storage failure messages actionable
     captureErrorMessage(
       new ApiError(503, "internal detail", "STORAGE_UNAVAILABLE"),
     ),
-  ).toBe("Private file storage is temporarily unavailable. Please try again later.");
+  ).toBe(
+    "Private file storage is temporarily unavailable. Please try again later.",
+  );
   expect(captureErrorMessage(new Error("network failed"))).toBe(
     "Something went wrong. Please try again.",
   );

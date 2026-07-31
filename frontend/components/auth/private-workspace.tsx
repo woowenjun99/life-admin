@@ -130,7 +130,7 @@ export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
   return (
     <main className="workspace-page">
       <nav aria-label="Workspace navigation" className="workspace-nav">
-        <Link aria-label="Life Inbox home" className="brand" href="/">
+        <Link aria-label="Life Inbox Today" className="brand" href="/today">
           <span aria-hidden="true" className="brand-mark">
             L
           </span>

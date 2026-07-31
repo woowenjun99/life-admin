@@ -1756,6 +1756,7 @@ footer p {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 1.5rem;
   padding: 1.1rem 1.2rem;
 }
@@ -1781,7 +1782,14 @@ footer p {
   font-weight: 700;
 }
 
-.plan-steps-live li > span {
+.plan-step-status {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.55rem;
+  justify-items: end;
+}
+
+.plan-step-status > span {
   flex: 0 0 auto;
   padding: 0.34rem 0.56rem;
   border-radius: 999px;
@@ -1791,9 +1799,62 @@ footer p {
   font-weight: 800;
 }
 
-.plan-steps-live li.is-waiting > span {
+.plan-steps-live li.is-waiting .plan-step-status > span {
   background: #f5ead8;
   color: #906d40;
+}
+
+.plan-steps-live li.is-complete .plan-step-status > span {
+  background: #e8eee9;
+  color: #426e61;
+}
+
+.plan-step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+.plan-steps-live li > .plan-step-actions {
+  flex: 0 0 auto;
+}
+
+.plan-step-button {
+  min-height: 2.35rem;
+  padding: 0.48rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.plan-waiting-form {
+  display: grid;
+  flex: 1 0 100%;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+
+.plan-waiting-form label {
+  color: #23483f;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.plan-waiting-form input {
+  width: 100%;
+  border: 1px solid #bfcfc4;
+  border-radius: 0.65rem;
+  background: #fffdf8;
+  padding: 0.6rem 0.7rem;
+  color: #253530;
+}
+
+.plan-waiting-form input:focus-visible {
+  outline: 3px solid color-mix(in srgb, #bd624d 42%, transparent);
+  outline-offset: 2px;
+}
+
+.plan-action-error {
+  margin-bottom: 1rem;
 }
 
 @media (max-width: 800px) {
@@ -1819,5 +1880,11 @@ footer p {
   .plan-steps-live li {
     gap: 0.8rem;
     flex-direction: column;
+  }
+
+  .plan-step-status,
+  .plan-step-actions {
+    justify-items: start;
+    justify-content: flex-start;
   }
 }

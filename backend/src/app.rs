@@ -9,10 +9,10 @@ use axum::{
     },
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, patch, post},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use time::{
     Date, OffsetDateTime, format_description::well_known::Rfc3339, macros::format_description,
@@ -26,7 +26,7 @@ use crate::{
     domain::{CaptureSourceType, InboxStatus, PlanStatus},
     inbox::{
         FileCapture, InboxItem, InboxItemDetail, InboxRepository, NewSuggestion, Plan, PlanStep,
-        Suggestion, SuggestionKind,
+        PlanStepUpdate, Suggestion, SuggestionKind, UpdatePlanStepResult,
     },
     storage::PrivateObjectStore,
 };
@@ -35,6 +35,7 @@ const MAX_TEXT_CAPTURE_CHARACTERS: usize = 10_000;
 const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_MULTIPART_BODY_BYTES: usize = MAX_FILE_BYTES + 1024 * 1024;
 const MAX_SUGGESTIONS: usize = 25;
+const MAX_WAITING_ON_CHARACTERS: usize = 2_000;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -68,6 +69,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/inbox-items/{item_id}/plans", post(create_plan))
         .route("/api/v1/plans/{plan_id}", get(get_plan))
+        .route(
+            "/api/v1/plans/{plan_id}/steps/{step_id}",
+            patch(update_plan_step),
+        )
         .route(
             "/api/v1/inbox-items/files",
             post(create_file_capture).layer(DefaultBodyLimit::max(MAX_MULTIPART_BODY_BYTES)),
@@ -497,6 +502,47 @@ async fn get_plan(
     }
 }
 
+async fn update_plan_step(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((plan_id, step_id)): Path<(String, String)>,
+    request: Result<Json<UpdatePlanStepRequest>, JsonRejection>,
+) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    let Ok(plan_id) = Uuid::parse_str(&plan_id) else {
+        return plan_id_validation_error_response();
+    };
+    let Ok(step_id) = Uuid::parse_str(&step_id) else {
+        return plan_step_id_validation_error_response();
+    };
+    let Ok(Json(request)) = request else {
+        return plan_step_validation_error_response();
+    };
+    let Ok(update) = PlanStepUpdate::try_from(request) else {
+        return plan_step_validation_error_response();
+    };
+
+    match state
+        .inbox_repository
+        .update_plan_step(&user.uid, plan_id, step_id, &update)
+        .await
+    {
+        Ok(UpdatePlanStepResult::Updated(plan)) => {
+            (StatusCode::OK, Json(PlanResponse::from(&plan))).into_response()
+        }
+        Ok(UpdatePlanStepResult::NotFound) => plan_step_not_found_response(),
+        Ok(UpdatePlanStepResult::InvalidState) => {
+            invalid_state_response("This Plan step can no longer be changed.")
+        }
+        Err(error) => {
+            tracing::error!(%error, "could not update Plan step");
+            internal_error_response("Could not update the Plan step.")
+        }
+    }
+}
+
 #[derive(Debug)]
 enum ExtractionError {
     NotFound,
@@ -652,8 +698,28 @@ fn plan_id_validation_error_response() -> Response {
     )
 }
 
+fn plan_step_id_validation_error_response() -> Response {
+    api_error_response(
+        StatusCode::BAD_REQUEST,
+        "VALIDATION_ERROR",
+        "Plan step ID must be a valid UUID.",
+    )
+}
+
+fn plan_step_validation_error_response() -> Response {
+    api_error_response(
+        StatusCode::BAD_REQUEST,
+        "VALIDATION_ERROR",
+        "Plan step updates require a valid status and waiting-on detail.",
+    )
+}
+
 fn inbox_item_not_found_response() -> Response {
     api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Inbox item not found.")
+}
+
+fn plan_step_not_found_response() -> Response {
+    api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Plan step not found.")
 }
 
 fn invalid_state_response(message: &str) -> Response {
@@ -827,6 +893,41 @@ impl TryFrom<SuggestionInput> for NewSuggestion {
             content,
             due_on: parse_date(value.due_on)?,
         })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct UpdatePlanStepRequest {
+    status: PlanStatus,
+    waiting_on: Value,
+}
+
+impl TryFrom<UpdatePlanStepRequest> for PlanStepUpdate {
+    type Error = ();
+
+    fn try_from(value: UpdatePlanStepRequest) -> Result<Self, Self::Error> {
+        let waiting_on = match value.waiting_on {
+            Value::Null => None,
+            Value::String(detail) => Some(detail.trim().to_owned()),
+            _ => return Err(()),
+        };
+        match (value.status, waiting_on) {
+            (PlanStatus::Waiting, Some(detail))
+                if !detail.is_empty() && detail.chars().count() <= MAX_WAITING_ON_CHARACTERS =>
+            {
+                Ok(Self {
+                    status: PlanStatus::Waiting,
+                    waiting_on: Some(detail),
+                })
+            }
+            (PlanStatus::Waiting, _) => Err(()),
+            (status, None) => Ok(Self {
+                status,
+                waiting_on: None,
+            }),
+            (_, Some(_)) => Err(()),
+        }
     }
 }
 
@@ -1054,10 +1155,14 @@ mod tests {
             ExtractionInput, OpenAiProvider,
         },
         auth::{AuthenticatedUser, TokenVerifier},
-        domain::{CaptureSourceType, InboxStatus, PlanStatus},
+        domain::{
+            CaptureSourceType, InboxStatus, PlanStatus, PlanStepState, derived_plan_status,
+            highlighted_next_action,
+        },
         inbox::{
             FileCapture, InboxItem, InboxItemDetail, InboxRepository, NewPlan, NewPlanStep,
-            NewSuggestion, Plan, PlanStep, Suggestion, SuggestionKind,
+            NewSuggestion, Plan, PlanStep, PlanStepUpdate, Suggestion, SuggestionKind,
+            UpdatePlanStepResult,
         },
         storage::PrivateObjectStore,
     };
@@ -1134,6 +1239,13 @@ mod tests {
                 .expect("test item should exist")
                 .1
                 .clone()
+        }
+
+        fn insert_plan(&self, owner_uid: &str, plan: Plan) {
+            self.plans
+                .lock()
+                .unwrap()
+                .insert(plan.id, (owner_uid.to_owned(), plan));
         }
     }
 
@@ -1323,6 +1435,48 @@ mod tests {
                 .filter(|(owner, _)| owner == owner_uid)
                 .map(|(_, plan)| plan.clone()))
         }
+
+        async fn update_plan_step(
+            &self,
+            owner_uid: &str,
+            plan_id: Uuid,
+            step_id: Uuid,
+            update: &PlanStepUpdate,
+        ) -> anyhow::Result<UpdatePlanStepResult> {
+            let mut plans = self.plans.lock().unwrap();
+            let Some((owner, plan)) = plans.get_mut(&plan_id) else {
+                return Ok(UpdatePlanStepResult::NotFound);
+            };
+            if owner != owner_uid {
+                return Ok(UpdatePlanStepResult::NotFound);
+            }
+            let Some(step) = plan.steps.iter_mut().find(|step| step.id == step_id) else {
+                return Ok(UpdatePlanStepResult::NotFound);
+            };
+            if !step.status.can_transition_to(update.status) {
+                return Ok(UpdatePlanStepResult::InvalidState);
+            }
+            step.status = update.status;
+            step.waiting_on = update.waiting_on.clone();
+
+            let states = plan
+                .steps
+                .iter()
+                .map(|step| PlanStepState {
+                    position: u32::try_from(step.position)
+                        .expect("test Plan step positions must be non-negative"),
+                    status: step.status,
+                })
+                .collect::<Vec<_>>();
+            plan.status =
+                derived_plan_status(&states).expect("test Plans must contain at least one step");
+            let next_position = highlighted_next_action(&states);
+            for step in &mut plan.steps {
+                step.is_next_action = u32::try_from(step.position).ok() == next_position;
+            }
+            plan.updated_at = OffsetDateTime::now_utc();
+            Ok(UpdatePlanStepResult::Updated(plan.clone()))
+        }
     }
 
     struct SequenceExtractionProvider {
@@ -1413,6 +1567,19 @@ mod tests {
             status: InboxStatus::Captured,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    fn plan_step(id: Uuid, position: i32, status: PlanStatus, is_next_action: bool) -> PlanStep {
+        PlanStep {
+            id,
+            position,
+            title: format!("Step {position}"),
+            rationale: format!("Why step {position} matters."),
+            status,
+            due_on: None,
+            waiting_on: None,
+            is_next_action,
         }
     }
 
@@ -1814,6 +1981,243 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(foreign_response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn plan_step_updates_recompute_the_next_action_and_plan_status() {
+        let plan_id = Uuid::new_v4();
+        let first_step_id = Uuid::new_v4();
+        let second_step_id = Uuid::new_v4();
+        let repository = Arc::new(WorkflowInboxRepository::default());
+        repository.insert_plan(
+            "user-123",
+            Plan {
+                id: plan_id,
+                inbox_item_id: Uuid::new_v4(),
+                summary: "Renew before travelling.".to_owned(),
+                status: PlanStatus::Ready,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+                steps: vec![
+                    plan_step(first_step_id, 0, PlanStatus::Ready, true),
+                    plan_step(second_step_id, 1, PlanStatus::Ready, false),
+                ],
+            },
+        );
+        let app = workflow_app(repository, Arc::new(DisabledAiProvider));
+
+        let completed = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{first_step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(completed.status(), StatusCode::OK);
+        let completed = response_json(completed).await;
+        assert_eq!(completed["plan"]["status"], "ready");
+        assert_eq!(completed["plan"]["steps"][0]["status"], "complete");
+        assert_eq!(completed["plan"]["steps"][0]["isNextAction"], false);
+        assert_eq!(completed["plan"]["steps"][1]["isNextAction"], true);
+
+        let waiting = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{second_step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"status":"waiting","waitingOn":"  a reply from the agency  "}"#,
+                    ))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(waiting.status(), StatusCode::OK);
+        let waiting = response_json(waiting).await;
+        assert_eq!(waiting["plan"]["status"], "waiting");
+        assert_eq!(
+            waiting["plan"]["steps"][1]["waitingOn"],
+            "a reply from the agency"
+        );
+        assert!(
+            waiting["plan"]["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|step| step["isNextAction"] == false)
+        );
+
+        let ready_again = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{second_step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"ready","waitingOn":null}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(ready_again.status(), StatusCode::OK);
+        let ready_again = response_json(ready_again).await;
+        assert_eq!(ready_again["plan"]["status"], "ready");
+        assert_eq!(ready_again["plan"]["steps"][1]["waitingOn"], Value::Null);
+        assert_eq!(ready_again["plan"]["steps"][1]["isNextAction"], true);
+
+        let all_complete = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{second_step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(all_complete.status(), StatusCode::OK);
+        let all_complete = response_json(all_complete).await;
+        assert_eq!(all_complete["plan"]["status"], "complete");
+        assert!(
+            all_complete["plan"]["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|step| step["status"] == "complete" && step["isNextAction"] == false)
+        );
+
+        let reopen = app
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{second_step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"ready","waitingOn":null}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(reopen.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(reopen).await["error"]["code"],
+            "INVALID_STATE"
+        );
+    }
+
+    #[tokio::test]
+    async fn plan_step_updates_validate_input_and_hide_foreign_or_mismatched_steps() {
+        let plan_id = Uuid::new_v4();
+        let step_id = Uuid::new_v4();
+        let repository = Arc::new(WorkflowInboxRepository::default());
+        repository.insert_plan(
+            "user-123",
+            Plan {
+                id: plan_id,
+                inbox_item_id: Uuid::new_v4(),
+                summary: "Renew before travelling.".to_owned(),
+                status: PlanStatus::Ready,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+                steps: vec![plan_step(step_id, 0, PlanStatus::Ready, true)],
+            },
+        );
+        let app = workflow_app(repository, Arc::new(DisabledAiProvider));
+
+        let invalid_waiting = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"waiting","waitingOn":"  "}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(invalid_waiting.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(invalid_waiting).await["error"]["code"],
+            "VALIDATION_ERROR"
+        );
+
+        let missing_waiting_detail = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"complete"}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(missing_waiting_detail.status(), StatusCode::BAD_REQUEST);
+
+        let unauthenticated = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let foreign = app
+            .clone()
+            .oneshot(other_user(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{step_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+
+        let missing_step = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/{}", Uuid::new_v4()))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(missing_step.status(), StatusCode::NOT_FOUND);
+
+        let malformed_step = app
+            .oneshot(valid(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/plans/{plan_id}/steps/not-a-uuid"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(malformed_step.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

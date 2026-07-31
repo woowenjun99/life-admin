@@ -12,7 +12,10 @@ use std::{collections::VecDeque, env, sync::Mutex};
 
 use ai::{AiCall, AiError, AiProvider, Extraction};
 use async_trait::async_trait;
-use inbox::{InboxRepository, NewPlan, SqlxInboxRepository, Suggestion};
+use domain::PlanStatus;
+use inbox::{
+    InboxRepository, NewPlan, PlanStepUpdate, SqlxInboxRepository, Suggestion, UpdatePlanStepResult,
+};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
@@ -94,6 +97,166 @@ async fn sqlx_repository_scopes_reads_to_the_owner_and_orders_newest_first() {
         .execute(&database)
         .await
         .expect("test inbox items should clean up");
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL for an isolated PostgreSQL database"]
+async fn sqlx_repository_updates_owned_plan_steps_and_derives_plan_state() {
+    let database = test_database().await;
+    let repository = SqlxInboxRepository::new(database.clone());
+    let owner_uid = format!("plan-step-owner-{}", Uuid::new_v4());
+    let other_owner_uid = format!("plan-step-other-{}", Uuid::new_v4());
+    let inbox_item_id = Uuid::new_v4();
+    let plan_id = Uuid::new_v4();
+    let first_step_id = Uuid::new_v4();
+    let second_step_id = Uuid::new_v4();
+
+    sqlx::query(
+        r#"
+        INSERT INTO inbox_items (id, owner_uid, source_type, original_text, status)
+        VALUES ($1, $2, 'text', 'Renew before travelling.', 'planned')
+        "#,
+    )
+    .bind(inbox_item_id)
+    .bind(&owner_uid)
+    .execute(&database)
+    .await
+    .expect("owned Inbox item should insert");
+    sqlx::query(
+        r#"
+        INSERT INTO plans (id, inbox_item_id, summary, status, created_at, updated_at)
+        VALUES ($1, $2, 'Renew before travelling.', 'ready', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+        "#,
+    )
+    .bind(plan_id)
+    .bind(inbox_item_id)
+    .execute(&database)
+    .await
+    .expect("owned Plan should insert");
+    sqlx::query(
+        r#"
+        INSERT INTO plan_steps (id, plan_id, position, title, rationale, status, is_next_action)
+        VALUES
+            ($1, $2, 0, 'Check requirements', 'Confirms what is needed.', 'ready', true),
+            ($3, $2, 1, 'Prepare documents', 'Makes the application ready.', 'ready', false)
+        "#,
+    )
+    .bind(first_step_id)
+    .bind(plan_id)
+    .bind(second_step_id)
+    .execute(&database)
+    .await
+    .expect("owned Plan steps should insert");
+
+    let UpdatePlanStepResult::Updated(completed) = repository
+        .update_plan_step(
+            &owner_uid,
+            plan_id,
+            first_step_id,
+            &PlanStepUpdate {
+                status: PlanStatus::Complete,
+                waiting_on: None,
+            },
+        )
+        .await
+        .expect("owned Plan step should update")
+    else {
+        panic!("owned Plan step should be found and transitionable");
+    };
+    assert_eq!(completed.status, PlanStatus::Ready);
+    assert!(completed.updated_at > time::OffsetDateTime::UNIX_EPOCH);
+    assert_eq!(
+        completed
+            .steps
+            .iter()
+            .find(|step| step.id == first_step_id)
+            .expect("first step should remain in the Plan")
+            .status,
+        PlanStatus::Complete
+    );
+    assert_eq!(
+        completed
+            .steps
+            .iter()
+            .find(|step| step.id == second_step_id)
+            .expect("second step should remain in the Plan")
+            .is_next_action,
+        true
+    );
+
+    let UpdatePlanStepResult::Updated(waiting) = repository
+        .update_plan_step(
+            &owner_uid,
+            plan_id,
+            second_step_id,
+            &PlanStepUpdate {
+                status: PlanStatus::Waiting,
+                waiting_on: Some("A reply from the agency".to_owned()),
+            },
+        )
+        .await
+        .expect("owned Plan step should become Waiting")
+    else {
+        panic!("owned Plan step should be found and transitionable");
+    };
+    assert_eq!(waiting.status, PlanStatus::Waiting);
+    assert!(waiting.steps.iter().all(|step| !step.is_next_action));
+    assert_eq!(
+        waiting
+            .steps
+            .iter()
+            .find(|step| step.id == second_step_id)
+            .expect("second step should remain in the Plan")
+            .waiting_on
+            .as_deref(),
+        Some("A reply from the agency")
+    );
+
+    let UpdatePlanStepResult::Updated(ready_again) = repository
+        .update_plan_step(
+            &owner_uid,
+            plan_id,
+            second_step_id,
+            &PlanStepUpdate {
+                status: PlanStatus::Ready,
+                waiting_on: None,
+            },
+        )
+        .await
+        .expect("owned Waiting Plan step should become Ready")
+    else {
+        panic!("owned Waiting Plan step should be found and transitionable");
+    };
+    assert_eq!(ready_again.status, PlanStatus::Ready);
+    let ready_second_step = ready_again
+        .steps
+        .iter()
+        .find(|step| step.id == second_step_id)
+        .expect("second step should remain in the Plan");
+    assert_eq!(ready_second_step.waiting_on, None);
+    assert!(ready_second_step.is_next_action);
+
+    assert!(matches!(
+        repository
+            .update_plan_step(
+                &other_owner_uid,
+                plan_id,
+                second_step_id,
+                &PlanStepUpdate {
+                    status: PlanStatus::Ready,
+                    waiting_on: None,
+                },
+            )
+            .await
+            .expect("foreign lookup should succeed"),
+        UpdatePlanStepResult::NotFound
+    ));
+
+    sqlx::query("DELETE FROM inbox_items WHERE id = $1")
+        .bind(inbox_item_id)
+        .execute(&database)
+        .await
+        .expect("owned fixture should clean up");
 }
 
 struct CleanupProvider {

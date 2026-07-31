@@ -50,7 +50,6 @@ impl InboxStatus {
     }
 }
 
-#[allow(dead_code)] // Persisted now; consumed by the later plan routes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanStatus {
@@ -59,8 +58,15 @@ pub enum PlanStatus {
     Complete,
 }
 
-#[allow(dead_code)] // Enforced by the later plan update routes.
 impl PlanStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Waiting => "waiting",
+            Self::Complete => "complete",
+        }
+    }
+
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "ready" => Some(Self::Ready),
@@ -80,14 +86,12 @@ impl PlanStatus {
     }
 }
 
-#[allow(dead_code)] // Persisted now; consumed by the later plan routes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlanStepState {
     pub position: u32,
     pub status: PlanStatus,
 }
 
-#[allow(dead_code)] // Used when plan reads are added.
 pub fn highlighted_next_action(steps: &[PlanStepState]) -> Option<u32> {
     steps
         .iter()
@@ -96,7 +100,6 @@ pub fn highlighted_next_action(steps: &[PlanStepState]) -> Option<u32> {
         .min()
 }
 
-#[allow(dead_code)] // Used when plan reads are added.
 pub fn derived_plan_status(steps: &[PlanStepState]) -> Option<PlanStatus> {
     if steps.is_empty() {
         return None;
@@ -168,5 +171,22 @@ mod tests {
 
         assert_eq!(highlighted_next_action(&steps), None);
         assert_eq!(derived_plan_status(&steps), Some(PlanStatus::Waiting));
+    }
+
+    #[test]
+    fn a_plan_with_only_completed_steps_is_complete() {
+        let steps = [
+            PlanStepState {
+                position: 0,
+                status: PlanStatus::Complete,
+            },
+            PlanStepState {
+                position: 1,
+                status: PlanStatus::Complete,
+            },
+        ];
+
+        assert_eq!(highlighted_next_action(&steps), None);
+        assert_eq!(derived_plan_status(&steps), Some(PlanStatus::Complete));
     }
 }

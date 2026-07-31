@@ -14,6 +14,7 @@ import {
   parsePlan,
   retryExtraction,
   saveSuggestions,
+  updatePlanStep,
   uploadFileCapture,
   validateCaptureFile,
 } from "./api";
@@ -351,6 +352,84 @@ test("review and Plan API calls require a bearer token and use only safe respons
         "Bearer firebase-id-token",
       );
     }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("updatePlanStep sends the complete status change and preserves API errors", async () => {
+  const originalFetch = globalThis.fetch;
+  let request: { input: RequestInfo | URL; init?: RequestInit } | undefined;
+  globalThis.fetch = (async (input, init) => {
+    request = { input, init };
+    return Response.json({
+      plan: {
+        id: "plan-123",
+        inboxItemId: "item-123",
+        summary: "Renew before the trip.",
+        status: "waiting",
+        steps: [
+          {
+            id: "step-123",
+            position: 0,
+            title: "Check requirements",
+            rationale: "Confirm the deadline.",
+            status: "waiting",
+            dueOn: null,
+            waitingOn: "A reply from the agency",
+            isNextAction: false,
+          },
+        ],
+        createdAt: "2026-07-30T00:00:00Z",
+        updatedAt: "2026-07-31T00:00:00Z",
+      },
+    });
+  }) as typeof fetch;
+
+  try {
+    const plan = await updatePlanStep(
+      { getIdToken: async () => "firebase-id-token" },
+      "plan-123",
+      "step-123",
+      { status: "waiting", waitingOn: "A reply from the agency" },
+    );
+
+    expect(plan.status).toBe("waiting");
+    expect(plan.steps[0]?.waitingOn).toBe("A reply from the agency");
+    expect(request?.input).toBe("/api/v1/plans/plan-123/steps/step-123");
+    expect(request?.init?.method).toBe("PATCH");
+    expect(new Headers(request?.init?.headers).get("Authorization")).toBe(
+      "Bearer firebase-id-token",
+    );
+    expect(new Headers(request?.init?.headers).get("Content-Type")).toBe(
+      "application/json",
+    );
+    expect(request?.init?.body).toBe(
+      '{"status":"waiting","waitingOn":"A reply from the agency"}',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  globalThis.fetch = (async () =>
+    Response.json(
+      {
+        error: {
+          code: "INVALID_STATE",
+          message: "This Plan step can no longer be changed.",
+        },
+      },
+      { status: 409 },
+    )) as unknown as typeof fetch;
+  try {
+    await expect(
+      updatePlanStep(
+        { getIdToken: async () => "firebase-id-token" },
+        "plan-123",
+        "step-123",
+        { status: "complete", waitingOn: null },
+      ),
+    ).rejects.toMatchObject({ status: 409, code: "INVALID_STATE" });
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -43,9 +43,10 @@ features that are already automated.
 
 Today, the implementation supports private authentication, authenticated text
 and PDF/JPEG/PNG capture, text/PDF extraction into editable suggestions, an
-explicit plan-generation confirmation, and a read-only Plan page. Image
-captures remain private and saved, but are not AI-extracted. Step completion
-and waiting-state updates are still later stages.
+explicit plan-generation confirmation, and an editable Plan page. A person can
+mark a step **Complete** or **Waiting** (with a required detail); the earliest
+ready step is then shown as the Next action. Image captures remain private and
+saved, but are not AI-extracted.
 
 ## Research and market-discovery starting point
 
@@ -66,10 +67,10 @@ interviews, competitive research, and usability testing are still needed.
 
 The current implementation provides the private Firebase-authenticated
 workspace, text and private-file capture backed by PostgreSQL metadata and
-Firebase Storage, automatic text/PDF extraction, editable review, and
-read-only plans. Every supported upload is type/size checked and stored
-privately. Image extraction, plan listing, step updates, and archive/delete
-controls are intentionally not included.
+Firebase Storage, automatic text/PDF extraction, editable review, and Plans
+with owner-scoped step-status updates. Every supported upload is type/size
+checked and stored privately. Image extraction, plan listing, and
+archive/delete controls are intentionally not included.
 
 ## Technical overview
 

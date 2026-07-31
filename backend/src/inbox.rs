@@ -4,7 +4,10 @@ use sqlx::{FromRow, PgPool};
 use time::{Date, OffsetDateTime};
 use uuid::Uuid;
 
-use crate::domain::{CaptureSourceType, InboxStatus, PlanStatus};
+use crate::domain::{
+    CaptureSourceType, InboxStatus, PlanStatus, PlanStepState, derived_plan_status,
+    highlighted_next_action,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InboxItem {
@@ -128,6 +131,19 @@ pub struct Plan {
     pub steps: Vec<PlanStep>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanStepUpdate {
+    pub status: PlanStatus,
+    pub waiting_on: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdatePlanStepResult {
+    Updated(Plan),
+    NotFound,
+    InvalidState,
+}
+
 #[async_trait]
 pub trait InboxRepository: Send + Sync {
     async fn create_text(&self, owner_uid: &str, text: &str) -> anyhow::Result<InboxItem>;
@@ -176,6 +192,16 @@ pub trait InboxRepository: Send + Sync {
 
     async fn get_plan(&self, _owner_uid: &str, _plan_id: Uuid) -> anyhow::Result<Option<Plan>> {
         anyhow::bail!("plan retrieval is not implemented")
+    }
+
+    async fn update_plan_step(
+        &self,
+        _owner_uid: &str,
+        _plan_id: Uuid,
+        _step_id: Uuid,
+        _update: &PlanStepUpdate,
+    ) -> anyhow::Result<UpdatePlanStepResult> {
+        anyhow::bail!("plan step updates are not implemented")
     }
 }
 
@@ -345,6 +371,13 @@ struct PlanStepRow {
     due_on: Option<Date>,
     waiting_on: Option<String>,
     is_next_action: bool,
+}
+
+#[derive(FromRow)]
+struct LockedPlanStepRow {
+    id: Uuid,
+    position: i32,
+    status: String,
 }
 
 impl TryFrom<PlanStepRow> for PlanStep {
@@ -593,5 +626,101 @@ impl InboxRepository for SqlxInboxRepository {
             updated_at: row.updated_at,
             steps,
         }))
+    }
+
+    async fn update_plan_step(
+        &self,
+        owner_uid: &str,
+        plan_id: Uuid,
+        step_id: Uuid,
+        update: &PlanStepUpdate,
+    ) -> anyhow::Result<UpdatePlanStepResult> {
+        let mut transaction = self.database.begin().await?;
+        let owned_plan_id = sqlx::query_scalar::<_, Uuid>(
+            "SELECT p.id FROM plans p INNER JOIN inbox_items i ON i.id = p.inbox_item_id WHERE p.id = $1 AND i.owner_uid = $2 FOR UPDATE",
+        )
+        .bind(plan_id)
+        .bind(owner_uid)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        if owned_plan_id.is_none() {
+            transaction.rollback().await?;
+            return Ok(UpdatePlanStepResult::NotFound);
+        }
+
+        let steps = sqlx::query_as::<_, LockedPlanStepRow>(
+            "SELECT id, position, status FROM plan_steps WHERE plan_id = $1 ORDER BY position ASC FOR UPDATE",
+        )
+        .bind(plan_id)
+        .fetch_all(&mut *transaction)
+        .await?;
+        let Some(target) = steps.iter().find(|step| step.id == step_id) else {
+            transaction.rollback().await?;
+            return Ok(UpdatePlanStepResult::NotFound);
+        };
+        let current_status = PlanStatus::parse(&target.status)
+            .ok_or_else(|| anyhow::anyhow!("plan step has an invalid status"))?;
+        if !current_status.can_transition_to(update.status) {
+            transaction.rollback().await?;
+            return Ok(UpdatePlanStepResult::InvalidState);
+        }
+
+        let states = steps
+            .iter()
+            .map(|step| {
+                Ok(PlanStepState {
+                    position: u32::try_from(step.position)
+                        .map_err(|_| anyhow::anyhow!("plan step has an invalid position"))?,
+                    status: if step.id == step_id {
+                        update.status
+                    } else {
+                        PlanStatus::parse(&step.status)
+                            .ok_or_else(|| anyhow::anyhow!("plan step has an invalid status"))?
+                    },
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let plan_status = derived_plan_status(&states)
+            .ok_or_else(|| anyhow::anyhow!("plan must contain at least one step"))?;
+        let next_position = highlighted_next_action(&states);
+
+        sqlx::query(
+            "UPDATE plan_steps SET is_next_action = false WHERE plan_id = $1 AND is_next_action",
+        )
+        .bind(plan_id)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "UPDATE plan_steps SET status = $1, waiting_on = $2 WHERE id = $3 AND plan_id = $4",
+        )
+        .bind(update.status.as_str())
+        .bind(&update.waiting_on)
+        .bind(step_id)
+        .bind(plan_id)
+        .execute(&mut *transaction)
+        .await?;
+        if let Some(position) = next_position {
+            sqlx::query(
+                "UPDATE plan_steps SET is_next_action = true WHERE plan_id = $1 AND position = $2",
+            )
+            .bind(plan_id)
+            .bind(
+                i32::try_from(position)
+                    .map_err(|_| anyhow::anyhow!("invalid plan step position"))?,
+            )
+            .execute(&mut *transaction)
+            .await?;
+        }
+        sqlx::query("UPDATE plans SET status = $1, updated_at = now() WHERE id = $2")
+            .bind(plan_status.as_str())
+            .bind(plan_id)
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+
+        match self.get_plan(owner_uid, plan_id).await? {
+            Some(plan) => Ok(UpdatePlanStepResult::Updated(plan)),
+            None => Err(anyhow::anyhow!("updated plan could not be reloaded")),
+        }
     }
 }

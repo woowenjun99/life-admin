@@ -19,7 +19,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [x] Extract tasks, dates, people, important context, and missing details.
 - [x] Require the user to review and edit suggestions before generating a plan.
 - [x] Generate a concise plan with one next action and two to five ordered steps.
-- [ ] Allow users to mark steps complete or waiting.
+- [x] Allow users to mark steps complete or waiting.
 - [ ] Never send messages, create calendar events, make purchases, or otherwise
       act externally without a separate explicit approval flow.
 
@@ -95,7 +95,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Status: `ready`, `waiting`, or `complete`.
   - [x] Step title, rationale, status, due date, and waiting-on detail.
 - [x] Scope every read and write to the authenticated Firebase UID.
-- [ ] Add repository tests for ownership and plan-status transitions.
+- [x] Add repository tests for ownership and plan-status transitions.
 
 ## Backend API
 
@@ -111,7 +111,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [x] Add `POST /api/v1/inbox-items/:id/plans` after review confirmation.
 - [x] Add `GET /api/v1/plans/:id`.
 - [ ] Add plan listing only after confirming the Inbox/Plan navigation UX.
-- [ ] Add `PATCH /api/v1/plans/:id/steps/:stepId` to update step status.
+- [x] Add `PATCH /api/v1/plans/:id/steps/:stepId` to update step status.
 - [ ] Add delete/archive endpoints only after confirming expected UX.
 - [ ] Return consistent API error envelopes for validation, authorization, not
       found, provider failure, and unexpected errors.
@@ -158,8 +158,8 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Explain that suggestions are not external actions.
 - [x] Build `/plans/[id]`.
   - [x] Show summary, next action, ordered steps, and rationale.
-  - [ ] Let the user mark a step complete or waiting.
-  - [ ] Promote the next unfinished step as the next action.
+  - [x] Let the user mark a step complete or waiting.
+  - [x] Promote the next unfinished ready step as the next action.
 - [ ] Make mobile layout usable for quick captures.
 - [ ] Add accessible labels, keyboard navigation, and visible focus states.
 

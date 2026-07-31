@@ -55,6 +55,11 @@ export type PlanStep = {
   isNextAction: boolean;
 };
 
+export type PlanStepUpdate = {
+  status: PlanStep["status"];
+  waitingOn: string | null;
+};
+
 export type Plan = {
   id: string;
   inboxItemId: string;
@@ -261,6 +266,25 @@ export async function fetchPlan(
   });
   if (!response.ok) {
     throw await responseError(response, "We could not load that plan.");
+  }
+  return parsePlan(await response.json());
+}
+
+export async function updatePlanStep(
+  user: IdTokenSource,
+  planId: string,
+  stepId: string,
+  update: PlanStepUpdate,
+): Promise<Plan> {
+  const response = await fetch(`/api/v1/plans/${planId}/steps/${stepId}`, {
+    method: "PATCH",
+    headers: await authorizationHeaders(user, {
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify(update),
+  });
+  if (!response.ok) {
+    throw await responseError(response, "We could not update that Plan step.");
   }
   return parsePlan(await response.json());
 }

@@ -130,6 +130,8 @@ export function PlanConversation({
     setStreamedAssistantContent("");
     void streamPlanMessage(user, plan.id, question, (delta) => {
       setStreamedAssistantContent((current) => `${current ?? ""}${delta}`);
+    }, () => {
+      setStreamedAssistantContent("");
     })
       .then(({ userMessage, assistantMessage }) => {
         setMessages((current) => settlePlanConversationMessage(
@@ -140,9 +142,9 @@ export function PlanConversation({
         ));
         setContent("");
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         setMessages((current) => current.filter((message) => message.id !== pendingMessageId));
-        setError("We could not discuss this Plan. Please try again.");
+        setError(error instanceof ApiError ? error.message : "We could not discuss this Plan. Please try again.");
       })
       .finally(() => {
         setStreamedAssistantContent(null);

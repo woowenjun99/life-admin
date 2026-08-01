@@ -25,7 +25,7 @@ use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 use crate::{
-    ai::{AiError, AiProvider, ExtractionInput, enqueue_cleanup},
+    ai::{AiError, AiProvider, ExtractionInput, PlanDiscussionStreamEvent, enqueue_cleanup},
     auth::{AuthenticatedUser, TokenVerifier},
     domain::{CaptureSourceType, InboxStatus, PlanStatus},
     inbox::{
@@ -837,7 +837,7 @@ async fn create_plan_conversation(
     let ai_provider = state.ai_provider.clone();
     let owner_uid = user.uid;
     let stream = async_stream::stream! {
-        let (delta_sender, mut delta_receiver) = mpsc::channel::<String>(32);
+        let (delta_sender, mut delta_receiver) = mpsc::channel::<PlanDiscussionStreamEvent>(32);
         let mut discussion = Box::pin(ai_provider.discuss_plan_stream(
             &plan,
             &messages,
@@ -847,13 +847,13 @@ async fn create_plan_conversation(
         let reply = loop {
             tokio::select! {
                 reply = &mut discussion => break reply,
-                Some(delta) = delta_receiver.recv() => {
-                    yield Ok::<Event, Infallible>(plan_conversation_sse_event("delta", json!({ "content": delta })));
+                Some(event) = delta_receiver.recv() => {
+                    yield Ok::<Event, Infallible>(plan_discussion_stream_sse_event(event));
                 }
             }
         };
-        while let Ok(delta) = delta_receiver.try_recv() {
-            yield Ok(plan_conversation_sse_event("delta", json!({ "content": delta })));
+        while let Ok(event) = delta_receiver.try_recv() {
+            yield Ok(plan_discussion_stream_sse_event(event));
         }
         let reply = match reply {
             Ok(reply) => reply,
@@ -1266,6 +1266,15 @@ fn plan_conversation_sse_event(event: &str, data: Value) -> Event {
         .event(event)
         .json_data(data)
         .expect("Plan discussion SSE payloads must serialize")
+}
+
+fn plan_discussion_stream_sse_event(event: PlanDiscussionStreamEvent) -> Event {
+    match event {
+        PlanDiscussionStreamEvent::Delta(content) => {
+            plan_conversation_sse_event("delta", json!({ "content": content }))
+        }
+        PlanDiscussionStreamEvent::Reset => plan_conversation_sse_event("reset", json!({})),
+    }
 }
 
 fn plan_conversation_ai_error(error: AiError) -> Value {

@@ -415,6 +415,7 @@ export async function streamPlanMessage(
   planId: string,
   content: string,
   onAssistantDelta: (content: string) => void,
+  onAssistantReset: () => void = () => undefined,
 ): Promise<{ userMessage: PlanMessage; assistantMessage: PlanMessage }> {
   const response = await fetch(`/api/v1/plans/${planId}/conversation`, {
     method: "POST",
@@ -457,6 +458,10 @@ export async function streamPlanMessage(
         throw invalid("The Plan conversation response was invalid.");
       }
       onAssistantDelta(payload.content);
+      return;
+    }
+    if (event === "reset") {
+      onAssistantReset();
       return;
     }
     if (event === "complete") {

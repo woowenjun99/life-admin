@@ -10,8 +10,37 @@ import {
   type Plan,
   type PlanDraftStep,
   type PlanMessage,
-  sendPlanMessage,
+  streamPlanMessage,
 } from "@/lib/api";
+
+const PENDING_MESSAGE_PREFIX = "pending-";
+
+export function mergeInitialPlanConversationMessages(
+  current: PlanMessage[],
+  loaded: PlanMessage[],
+): PlanMessage[] {
+  const loadedIds = new Set(loaded.map((message) => message.id));
+  const pending = current.filter(
+    (message) => message.id.startsWith(PENDING_MESSAGE_PREFIX) && !loadedIds.has(message.id),
+  );
+  return [...loaded, ...pending];
+}
+
+export function settlePlanConversationMessage(
+  current: PlanMessage[],
+  pendingMessageId: string,
+  userMessage: PlanMessage,
+  assistantMessage: PlanMessage,
+): PlanMessage[] {
+  const persistedIds = new Set([userMessage.id, assistantMessage.id]);
+  return [
+    ...current.filter(
+      (message) => message.id !== pendingMessageId && !persistedIds.has(message.id),
+    ),
+    userMessage,
+    assistantMessage,
+  ];
+}
 
 type PlanConversationProps = {
   plan: Plan;
@@ -48,7 +77,9 @@ export function PlanConversation({
   const [hasMore, setHasMore] = useState(false);
   const [content, setContent] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [hasLoadedInitial, setHasLoadedInitial] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [streamedAssistantContent, setStreamedAssistantContent] = useState<string | null>(null);
   const [applyingMessageId, setApplyingMessageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,12 +89,17 @@ export function PlanConversation({
     setError(null);
     try {
       const page = await fetchPlanConversation(user, plan.id, before);
-      setMessages((current) => (before ? [...page.messages, ...current] : page.messages));
+      setMessages((current) => (
+        before
+          ? [...page.messages, ...current]
+          : mergeInitialPlanConversationMessages(current, page.messages)
+      ));
       setHasMore(page.hasMore);
     } catch {
       setError("We could not load this Plan discussion. Please try again.");
     } finally {
       setIsLoading(false);
+      if (!before) setHasLoadedInitial(true);
     }
   }, [plan.id, user]);
 
@@ -80,16 +116,38 @@ export function PlanConversation({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const question = content.trim();
-    if (!user || !question || isSending) return;
+    if (!user || !question || isSending || !hasLoadedInitial) return;
+    const pendingMessageId = `pending-${Date.now()}`;
+    const pendingMessage: PlanMessage = {
+      id: pendingMessageId,
+      role: "user",
+      content: question,
+      createdAt: new Date().toISOString(),
+    };
     setIsSending(true);
     setError(null);
-    void sendPlanMessage(user, plan.id, question)
+    setMessages((current) => [...current, pendingMessage]);
+    setStreamedAssistantContent("");
+    void streamPlanMessage(user, plan.id, question, (delta) => {
+      setStreamedAssistantContent((current) => `${current ?? ""}${delta}`);
+    })
       .then(({ userMessage, assistantMessage }) => {
-        setMessages((current) => [...current, userMessage, assistantMessage]);
+        setMessages((current) => settlePlanConversationMessage(
+          current,
+          pendingMessageId,
+          userMessage,
+          assistantMessage,
+        ));
         setContent("");
       })
-      .catch(() => setError("We could not discuss this Plan. Please try again."))
-      .finally(() => setIsSending(false));
+      .catch(() => {
+        setMessages((current) => current.filter((message) => message.id !== pendingMessageId));
+        setError("We could not discuss this Plan. Please try again.");
+      })
+      .finally(() => {
+        setStreamedAssistantContent(null);
+        setIsSending(false);
+      });
   };
 
   const apply = (message: PlanMessage) => {
@@ -145,7 +203,7 @@ export function PlanConversation({
               Load older messages
             </button>
           ) : null}
-          {isLoading && messages.length === 0 ? <p>Opening discussion…</p> : null}
+          {isLoading && !hasLoadedInitial ? <p>Opening discussion…</p> : null}
           <div aria-live="polite" className="plan-messages">
             {messages.map((message) => {
               const stale = Boolean(message.proposal && message.baseRevision !== plan.revision);
@@ -180,12 +238,18 @@ export function PlanConversation({
                 </article>
               );
             })}
+            {streamedAssistantContent !== null ? (
+              <article className="plan-message plan-message-assistant plan-message-streaming">
+                <p className="workspace-empty-kicker">Life Inbox</p>
+                <p>{streamedAssistantContent || "Thinking…"}</p>
+              </article>
+            ) : null}
           </div>
           {error ? <p className="workspace-error plan-action-error" role="alert">{error}</p> : null}
           <form className="plan-conversation-form" onSubmit={submit}>
             <label htmlFor="plan-conversation-message">Ask about this Plan</label>
             <textarea
-              disabled={isSending}
+              disabled={isSending || !hasLoadedInitial}
               id="plan-conversation-message"
               maxLength={2000}
               onChange={(event) => setContent(event.target.value)}
@@ -193,7 +257,7 @@ export function PlanConversation({
               required
               value={content}
             />
-            <button className="button button-primary" disabled={isSending || !content.trim()} type="submit">
+            <button className="button button-primary" disabled={isSending || !hasLoadedInitial || !content.trim()} type="submit">
               {isSending ? "Thinking…" : "Send"}
             </button>
           </form>

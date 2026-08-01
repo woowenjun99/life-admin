@@ -22,7 +22,7 @@ import {
   retryExtraction,
   saveFcmRegistrationToken,
   saveSuggestions,
-  sendPlanMessage,
+  streamPlanMessage,
   updatePlan,
   updatePlanStep,
   uploadFileCapture,
@@ -481,38 +481,22 @@ test("Plan edits and discussions use revision-bound owner-authenticated contract
       return Response.json({ plan });
     }
     if (init?.method === "POST") {
-      return Response.json({
-        userMessage: {
-          id: "message-user",
-          role: "user",
-          content: "Could you revise this?",
-          proposal: null,
-          baseRevision: null,
-          appliedRevision: null,
-          createdAt: "2026-08-01T00:00:00Z",
+      const events = [
+        "event: delta\ndata: {\"content\":\"Here is a \"}\n\n",
+        "event: delta\ndata: {\"content\":\"revision to review.\"}\n\n",
+        "event: complete\ndata: {\"userMessage\":{\"id\":\"message-user\",\"role\":\"user\",\"content\":\"Could you revise this?\",\"proposal\":null,\"baseRevision\":null,\"appliedRevision\":null,\"createdAt\":\"2026-08-01T00:00:00Z\"},\"assistantMessage\":{\"id\":\"message-assistant\",\"role\":\"assistant\",\"content\":\"Here is a revision to review.\",\"proposal\":{\"summary\":\"Renew before travel.\",\"steps\":[{\"id\":\"step-123\",\"title\":\"Confirm requirements\",\"rationale\":\"Clarifies the deadline.\",\"status\":\"ready\",\"dueOn\":null,\"waitingOn\":null}]},\"baseRevision\":1,\"appliedRevision\":null,\"createdAt\":\"2026-08-01T00:00:01Z\"}}\n\n",
+      ].join("");
+      const split = Math.floor(events.length / 2);
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(events.slice(0, split)));
+          controller.enqueue(encoder.encode(events.slice(split)));
+          controller.close();
         },
-        assistantMessage: {
-          id: "message-assistant",
-          role: "assistant",
-          content: "Here is a revision to review.",
-          proposal: {
-            summary: "Renew before travel.",
-            steps: [
-              {
-                id: "step-123",
-                title: "Confirm requirements",
-                rationale: "Clarifies the deadline.",
-                status: "ready",
-                dueOn: null,
-                waitingOn: null,
-              },
-            ],
-          },
-          baseRevision: 1,
-          appliedRevision: null,
-          createdAt: "2026-08-01T00:00:01Z",
-        },
-      });
+      }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
     }
     return Response.json({
       messages: [],
@@ -536,8 +520,12 @@ test("Plan edits and discussions use revision-bound owner-authenticated contract
     });
     const conversation = await fetchPlanConversation(user, "plan-123");
     expect(conversation.hasMore).toBe(false);
-    const reply = await sendPlanMessage(user, "plan-123", "Could you revise this?");
+    const deltas: string[] = [];
+    const reply = await streamPlanMessage(user, "plan-123", "Could you revise this?", (delta) => {
+      deltas.push(delta);
+    });
     expect(reply.assistantMessage.proposal?.steps[0]?.id).toBe("step-123");
+    expect(deltas.join("")).toBe("Here is a revision to review.");
     await applyPlanProposal(user, "plan-123", "message-assistant", 1);
 
     expect(requests.map(({ input }) => input)).toEqual([
@@ -567,6 +555,27 @@ test("Plan edits and discussions use revision-bound owner-authenticated contract
         "Bearer firebase-id-token",
       );
     }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("streamPlanMessage reports an SSE error after partial assistant text", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(
+    "event: delta\ndata: {\"content\":\"Partial reply\"}\n\nevent: error\ndata: {\"code\":\"AI_UNAVAILABLE\",\"message\":\"Try again later.\"}\n\n",
+    { headers: { "content-type": "text/event-stream" } },
+  )) as unknown as typeof fetch;
+
+  try {
+    const deltas: string[] = [];
+    await expect(streamPlanMessage(
+      { getIdToken: async () => "firebase-id-token" },
+      "plan-123",
+      "Could you revise this?",
+      (delta) => deltas.push(delta),
+    )).rejects.toMatchObject({ code: "AI_UNAVAILABLE", message: "Try again later." });
+    expect(deltas).toEqual(["Partial reply"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

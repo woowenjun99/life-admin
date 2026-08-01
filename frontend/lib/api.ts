@@ -410,10 +410,11 @@ export async function fetchPlanConversation(
   return parsePlanConversation(await response.json());
 }
 
-export async function sendPlanMessage(
+export async function streamPlanMessage(
   user: IdTokenSource,
   planId: string,
   content: string,
+  onAssistantDelta: (content: string) => void,
 ): Promise<{ userMessage: PlanMessage; assistantMessage: PlanMessage }> {
   const response = await fetch(`/api/v1/plans/${planId}/conversation`, {
     method: "POST",
@@ -425,14 +426,75 @@ export async function sendPlanMessage(
   if (!response.ok) {
     throw await responseError(response, "We could not discuss this Plan.");
   }
-  const payload = await response.json();
-  if (!isRecord(payload) || !isRecord(payload.userMessage) || !isRecord(payload.assistantMessage)) {
+  if (!response.headers.get("content-type")?.includes("text/event-stream") || !response.body) {
     throw invalid("The Plan conversation response was invalid.");
   }
-  return {
-    userMessage: parsePlanMessage(payload.userMessage),
-    assistantMessage: parsePlanMessage(payload.assistantMessage),
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let complete: { userMessage: PlanMessage; assistantMessage: PlanMessage } | undefined;
+  let streamError: ApiError | undefined;
+
+  const handleEvent = (frame: string) => {
+    let event = "message";
+    const data: string[] = [];
+    for (const line of frame.split(/\r?\n/)) {
+      if (line.startsWith("event:")) event = line.slice("event:".length).trim();
+      if (line.startsWith("data:")) {
+        const value = line.slice("data:".length);
+        data.push(value.startsWith(" ") ? value.slice(1) : value);
+      }
+    }
+    if (data.length === 0) return;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(data.join("\n"));
+    } catch {
+      throw invalid("The Plan conversation response was invalid.");
+    }
+    if (event === "delta") {
+      if (!isRecord(payload) || typeof payload.content !== "string") {
+        throw invalid("The Plan conversation response was invalid.");
+      }
+      onAssistantDelta(payload.content);
+      return;
+    }
+    if (event === "complete") {
+      if (!isRecord(payload) || !isRecord(payload.userMessage) || !isRecord(payload.assistantMessage)) {
+        throw invalid("The Plan conversation response was invalid.");
+      }
+      complete = {
+        userMessage: parsePlanMessage(payload.userMessage),
+        assistantMessage: parsePlanMessage(payload.assistantMessage),
+      };
+      return;
+    }
+    if (event === "error") {
+      const message = isRecord(payload) && typeof payload.message === "string"
+        ? payload.message
+        : "We could not discuss this Plan.";
+      const code = isRecord(payload) && typeof payload.code === "string"
+        ? payload.code
+        : undefined;
+      streamError = new ApiError(502, message, code);
+    }
   };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    let boundary = /\r?\n\r?\n/.exec(buffer);
+    while (boundary?.index !== undefined) {
+      handleEvent(buffer.slice(0, boundary.index));
+      buffer = buffer.slice(boundary.index + boundary[0].length);
+      boundary = /\r?\n\r?\n/.exec(buffer);
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) handleEvent(buffer);
+  if (streamError) throw streamError;
+  if (complete) return complete;
+  throw invalid("The Plan conversation response was incomplete.");
 }
 
 export async function applyPlanProposal(

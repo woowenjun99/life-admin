@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
@@ -8,7 +8,10 @@ use axum::{
         multipart::MultipartError, rejection::JsonRejection,
     },
     http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Response},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::{get, patch, post, put},
 };
 use serde::{Deserialize, Serialize};
@@ -17,6 +20,7 @@ use sqlx::PgPool;
 use time::{
     Date, OffsetDateTime, format_description::well_known::Rfc3339, macros::format_description,
 };
+use tokio::sync::mpsc;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
@@ -829,33 +833,67 @@ async fn create_plan_conversation(
             return internal_error_response("Could not load the Plan conversation.");
         }
     };
-    let reply = match state
-        .ai_provider
-        .discuss_plan(&plan, &messages, &content)
-        .await
-    {
-        Ok(reply) => reply,
-        Err(error) => return ai_error_response(error),
-    };
-    match state
-        .inbox_repository
-        .add_plan_discussion(&user.uid, plan_id, plan.revision, &content, &reply)
-        .await
-    {
-        Ok(Some((user_message, assistant_message))) => (
-            StatusCode::CREATED,
-            Json(PlanDiscussionCreateResponse {
-                user_message: PlanMessageResponse::from(&user_message),
-                assistant_message: PlanMessageResponse::from(&assistant_message),
-            }),
-        )
-            .into_response(),
-        Ok(None) => api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Plan not found."),
-        Err(error) => {
-            tracing::error!(%error, "could not persist Plan conversation");
-            internal_error_response("Could not save the Plan conversation.")
+    let inbox_repository = state.inbox_repository.clone();
+    let ai_provider = state.ai_provider.clone();
+    let owner_uid = user.uid;
+    let stream = async_stream::stream! {
+        let (delta_sender, mut delta_receiver) = mpsc::channel::<String>(32);
+        let mut discussion = Box::pin(ai_provider.discuss_plan_stream(
+            &plan,
+            &messages,
+            &content,
+            &delta_sender,
+        ));
+        let reply = loop {
+            tokio::select! {
+                reply = &mut discussion => break reply,
+                Some(delta) = delta_receiver.recv() => {
+                    yield Ok::<Event, Infallible>(plan_conversation_sse_event("delta", json!({ "content": delta })));
+                }
+            }
+        };
+        while let Ok(delta) = delta_receiver.try_recv() {
+            yield Ok(plan_conversation_sse_event("delta", json!({ "content": delta })));
         }
-    }
+        let reply = match reply {
+            Ok(reply) => reply,
+            Err(error) => {
+                yield Ok(plan_conversation_sse_event("error", plan_conversation_ai_error(error)));
+                return;
+            }
+        };
+        match inbox_repository
+            .add_plan_discussion(&owner_uid, plan_id, plan.revision, &content, &reply)
+            .await
+        {
+            Ok(Some((user_message, assistant_message))) => {
+                yield Ok(plan_conversation_sse_event("complete", json!({
+                    "userMessage": PlanMessageResponse::from(&user_message),
+                    "assistantMessage": PlanMessageResponse::from(&assistant_message),
+                })));
+            }
+            Ok(None) => {
+                yield Ok(plan_conversation_sse_event("error", json!({
+                    "code": "NOT_FOUND",
+                    "message": "Plan not found.",
+                })));
+            }
+            Err(error) => {
+                tracing::error!(%error, "could not persist Plan conversation");
+                yield Ok(plan_conversation_sse_event("error", json!({
+                    "code": "INTERNAL_ERROR",
+                    "message": "Could not save the Plan conversation.",
+                })));
+            }
+        }
+    };
+    Sse::new(stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keep-alive"),
+        )
+        .into_response()
 }
 
 async fn apply_plan_proposal(
@@ -1220,6 +1258,30 @@ fn ai_error_response(error: AiError) -> Response {
             "AI_UNAVAILABLE",
             "AI sorting is temporarily unavailable. Please try again.",
         ),
+    }
+}
+
+fn plan_conversation_sse_event(event: &str, data: Value) -> Event {
+    Event::default()
+        .event(event)
+        .json_data(data)
+        .expect("Plan discussion SSE payloads must serialize")
+}
+
+fn plan_conversation_ai_error(error: AiError) -> Value {
+    match error {
+        AiError::Unsupported => json!({
+            "code": "AI_UNSUPPORTED",
+            "message": "The configured AI provider does not support Plan discussions.",
+        }),
+        AiError::InvalidOutput => json!({
+            "code": "AI_OUTPUT_INVALID",
+            "message": "The AI response could not be used. Please try again.",
+        }),
+        AiError::Unavailable | AiError::Transient | AiError::Failed => json!({
+            "code": "AI_UNAVAILABLE",
+            "message": "Plan discussion is temporarily unavailable. Please try again.",
+        }),
     }
 }
 
@@ -1669,13 +1731,6 @@ impl From<crate::inbox::PlanMessagesPage> for PlanConversationResponse {
             has_more: value.has_more,
         }
     }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PlanDiscussionCreateResponse {
-    user_message: PlanMessageResponse,
-    assistant_message: PlanMessageResponse,
 }
 
 #[derive(Serialize)]
@@ -3865,14 +3920,34 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert_eq!(conversation.status(), StatusCode::CREATED);
-        let conversation = response_json(conversation).await;
-        let message_id = conversation["assistantMessage"]["id"]
+        assert_eq!(conversation.status(), StatusCode::OK);
+        assert!(
+            conversation
+                .headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.starts_with("text/event-stream"))
+        );
+        let conversation = String::from_utf8(
+            to_bytes(conversation.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(conversation.contains("event: delta"));
+        let complete = conversation
+            .split("\n\n")
+            .find(|event| event.contains("event: complete"))
+            .and_then(|event| event.lines().find_map(|line| line.strip_prefix("data: ")))
+            .map(|data| serde_json::from_str::<Value>(data).unwrap())
+            .expect("conversation stream should complete");
+        let message_id = complete["assistantMessage"]["id"]
             .as_str()
             .expect("assistant message should have an ID");
-        assert_eq!(conversation["assistantMessage"]["baseRevision"], 1);
+        assert_eq!(complete["assistantMessage"]["baseRevision"], 1);
         assert_eq!(
-            conversation["assistantMessage"]["proposal"]["steps"][0]["id"],
+            complete["assistantMessage"]["proposal"]["steps"][0]["id"],
             step_id.to_string()
         );
 

@@ -2385,6 +2385,7 @@ footer p {
 .plan-messages {
   display: grid;
   gap: 0.75rem;
+  justify-items: start;
   max-height: 36rem;
   overflow: auto;
 }
@@ -2392,6 +2393,7 @@ footer p {
 .plan-message {
   display: grid;
   gap: 0.5rem;
+  width: min(100%, 50rem);
   max-width: 50rem;
   padding: 0.9rem 1rem;
   border: 1px solid #dce3dc;
@@ -2400,9 +2402,13 @@ footer p {
 }
 
 .plan-message-user {
-  margin-left: 8%;
+  justify-self: end;
   border-color: #e2c5b8;
   background: #fff3eb;
+}
+
+.plan-message-assistant {
+  justify-self: start;
 }
 
 .plan-message > p:not(.workspace-empty-kicker),

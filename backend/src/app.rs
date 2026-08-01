@@ -25,8 +25,10 @@ use crate::{
     auth::{AuthenticatedUser, TokenVerifier},
     domain::{CaptureSourceType, InboxStatus, PlanStatus},
     inbox::{
-        ArchivePlanResult, FileCapture, InboxItem, InboxItemDetail, InboxRepository, NewSuggestion,
-        Plan, PlanStep, PlanStepUpdate, Suggestion, SuggestionKind, UpdatePlanStepResult,
+        ApplyPlanProposalResult, ArchivePlanResult, FileCapture, InboxItem, InboxItemDetail,
+        InboxRepository, NewSuggestion, Plan, PlanDraft, PlanDraftStep, PlanMessage,
+        PlanMessageRole, PlanRevisionSource, PlanStep, PlanStepUpdate, PlanUpdate, Suggestion,
+        SuggestionKind, UpdatePlanResult, UpdatePlanStepResult,
     },
     notifications::{FcmRegistrationToken, FcmTokenRegistrationLimitReached, NotificationService},
     storage::PrivateObjectStore,
@@ -37,6 +39,9 @@ const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_MULTIPART_BODY_BYTES: usize = MAX_FILE_BYTES + 1024 * 1024;
 const MAX_SUGGESTIONS: usize = 25;
 const MAX_WAITING_ON_CHARACTERS: usize = 2_000;
+const MAX_PLAN_STEPS: usize = 20;
+const MAX_PLAN_DISCUSSION_CHARACTERS: usize = 2_000;
+const PLAN_MESSAGES_PAGE_SIZE: i64 = 50;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -71,7 +76,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/inbox-items/{item_id}/plans", post(create_plan))
         .route("/api/v1/plans", get(list_plans))
-        .route("/api/v1/plans/{plan_id}", get(get_plan))
+        .route("/api/v1/plans/{plan_id}", get(get_plan).put(update_plan))
         .route("/api/v1/plans/{plan_id}/archive", post(archive_plan))
         .route("/api/v1/plans/{plan_id}/restore", post(restore_plan))
         .route(
@@ -81,6 +86,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/plans/{plan_id}/steps/{step_id}",
             patch(update_plan_step),
+        )
+        .route(
+            "/api/v1/plans/{plan_id}/conversation",
+            get(list_plan_conversation).post(create_plan_conversation),
+        )
+        .route(
+            "/api/v1/plans/{plan_id}/conversation/{message_id}/apply",
+            post(apply_plan_proposal),
         )
         .route(
             "/api/v1/inbox-items/files",
@@ -581,6 +594,44 @@ async fn get_plan(
     }
 }
 
+async fn update_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<String>,
+    request: Result<Json<UpdatePlanRequest>, JsonRejection>,
+) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    let Ok(plan_id) = Uuid::parse_str(&plan_id) else {
+        return plan_id_validation_error_response();
+    };
+    let Ok(Json(request)) = request else {
+        return plan_update_validation_error_response();
+    };
+    let Ok(update) = PlanUpdate::try_from(request) else {
+        return plan_update_validation_error_response();
+    };
+    match state
+        .inbox_repository
+        .update_plan(&user.uid, plan_id, &update, PlanRevisionSource::Manual)
+        .await
+    {
+        Ok(UpdatePlanResult::Updated(plan)) => {
+            (StatusCode::OK, Json(PlanResponse::from(&plan))).into_response()
+        }
+        Ok(UpdatePlanResult::NotFound) => {
+            api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Plan not found.")
+        }
+        Ok(UpdatePlanResult::Conflict) => plan_revision_conflict_response(),
+        Ok(UpdatePlanResult::Invalid) => plan_update_validation_error_response(),
+        Err(error) => {
+            tracing::error!(%error, "could not update Plan");
+            internal_error_response("Could not update the Plan.")
+        }
+    }
+}
+
 async fn list_plans(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -689,12 +740,163 @@ async fn update_plan_step(
             (StatusCode::OK, Json(PlanResponse::from(&plan))).into_response()
         }
         Ok(UpdatePlanStepResult::NotFound) => plan_step_not_found_response(),
+        Ok(UpdatePlanStepResult::Conflict) => plan_revision_conflict_response(),
         Ok(UpdatePlanStepResult::InvalidState) => {
-            invalid_state_response("This Plan step can no longer be changed.")
+            invalid_state_response("Completed Plan steps cannot be reopened.")
         }
         Err(error) => {
             tracing::error!(%error, "could not update Plan step");
             internal_error_response("Could not update the Plan step.")
+        }
+    }
+}
+
+async fn list_plan_conversation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<String>,
+    Query(query): Query<PlanConversationQuery>,
+) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    let Ok(plan_id) = Uuid::parse_str(&plan_id) else {
+        return plan_id_validation_error_response();
+    };
+    let before = match query.before {
+        Some(before) => match OffsetDateTime::parse(&before, &Rfc3339) {
+            Ok(before) => Some(before),
+            Err(_) => return plan_conversation_validation_error_response(),
+        },
+        None => None,
+    };
+    match state
+        .inbox_repository
+        .list_plan_messages(&user.uid, plan_id, before, PLAN_MESSAGES_PAGE_SIZE)
+        .await
+    {
+        Ok(Some(page)) => {
+            (StatusCode::OK, Json(PlanConversationResponse::from(page))).into_response()
+        }
+        Ok(None) => api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Plan not found."),
+        Err(error) => {
+            tracing::error!(%error, "could not load Plan conversation");
+            internal_error_response("Could not load the Plan conversation.")
+        }
+    }
+}
+
+async fn create_plan_conversation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<String>,
+    request: Result<Json<PlanConversationRequest>, JsonRejection>,
+) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    let Ok(plan_id) = Uuid::parse_str(&plan_id) else {
+        return plan_id_validation_error_response();
+    };
+    let Ok(Json(request)) = request else {
+        return plan_conversation_validation_error_response();
+    };
+    let content = request.content.trim().to_owned();
+    if content.is_empty() || content.chars().count() > MAX_PLAN_DISCUSSION_CHARACTERS {
+        return plan_conversation_validation_error_response();
+    }
+    let plan = match state.inbox_repository.get_plan(&user.uid, plan_id).await {
+        Ok(Some(plan)) => plan,
+        Ok(None) => {
+            return api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Plan not found.");
+        }
+        Err(error) => {
+            tracing::error!(%error, "could not load Plan for conversation");
+            return internal_error_response("Could not load the Plan.");
+        }
+    };
+    let messages = match state
+        .inbox_repository
+        .list_plan_messages(&user.uid, plan_id, None, PLAN_MESSAGES_PAGE_SIZE)
+        .await
+    {
+        Ok(Some(page)) => page.messages,
+        Ok(None) => {
+            return api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Plan not found.");
+        }
+        Err(error) => {
+            tracing::error!(%error, "could not load Plan conversation context");
+            return internal_error_response("Could not load the Plan conversation.");
+        }
+    };
+    let reply = match state
+        .ai_provider
+        .discuss_plan(&plan, &messages, &content)
+        .await
+    {
+        Ok(reply) => reply,
+        Err(error) => return ai_error_response(error),
+    };
+    match state
+        .inbox_repository
+        .add_plan_discussion(&user.uid, plan_id, plan.revision, &content, &reply)
+        .await
+    {
+        Ok(Some((user_message, assistant_message))) => (
+            StatusCode::CREATED,
+            Json(PlanDiscussionCreateResponse {
+                user_message: PlanMessageResponse::from(&user_message),
+                assistant_message: PlanMessageResponse::from(&assistant_message),
+            }),
+        )
+            .into_response(),
+        Ok(None) => api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Plan not found."),
+        Err(error) => {
+            tracing::error!(%error, "could not persist Plan conversation");
+            internal_error_response("Could not save the Plan conversation.")
+        }
+    }
+}
+
+async fn apply_plan_proposal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((plan_id, message_id)): Path<(String, String)>,
+    request: Result<Json<ApplyPlanProposalRequest>, JsonRejection>,
+) -> Response {
+    let Ok(user) = authenticated_user(&headers, state.token_verifier.as_ref()).await else {
+        return unauthenticated_response();
+    };
+    let (Ok(plan_id), Ok(message_id)) = (Uuid::parse_str(&plan_id), Uuid::parse_str(&message_id))
+    else {
+        return plan_conversation_validation_error_response();
+    };
+    let Ok(Json(request)) = request else {
+        return plan_conversation_validation_error_response();
+    };
+    if request.expected_revision < 1 {
+        return plan_conversation_validation_error_response();
+    }
+    match state
+        .inbox_repository
+        .apply_plan_proposal(&user.uid, plan_id, message_id, request.expected_revision)
+        .await
+    {
+        Ok(ApplyPlanProposalResult::Updated(plan)) => {
+            (StatusCode::OK, Json(PlanResponse::from(&plan))).into_response()
+        }
+        Ok(ApplyPlanProposalResult::NotFound) => api_error_response(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "Plan proposal not found.",
+        ),
+        Ok(ApplyPlanProposalResult::Conflict) => plan_revision_conflict_response(),
+        Ok(ApplyPlanProposalResult::Invalid) => {
+            invalid_state_response("This Plan proposal cannot be applied.")
+        }
+        Err(error) => {
+            tracing::error!(%error, "could not apply Plan proposal");
+            internal_error_response("Could not apply the Plan proposal.")
         }
     }
 }
@@ -914,6 +1116,30 @@ fn plan_step_validation_error_response() -> Response {
     )
 }
 
+fn plan_update_validation_error_response() -> Response {
+    api_error_response(
+        StatusCode::BAD_REQUEST,
+        "VALIDATION_ERROR",
+        "Plan updates require a summary, one to twenty valid steps, and the current revision.",
+    )
+}
+
+fn plan_conversation_validation_error_response() -> Response {
+    api_error_response(
+        StatusCode::BAD_REQUEST,
+        "VALIDATION_ERROR",
+        "Plan conversation requests must be valid and no longer than 2,000 characters.",
+    )
+}
+
+fn plan_revision_conflict_response() -> Response {
+    api_error_response(
+        StatusCode::CONFLICT,
+        "PLAN_REVISION_CONFLICT",
+        "This Plan changed elsewhere. Reload it before saving your changes.",
+    )
+}
+
 fn inbox_item_not_found_response() -> Response {
     api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "Inbox item not found.")
 }
@@ -1099,8 +1325,46 @@ impl TryFrom<SuggestionInput> for NewSuggestion {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct UpdatePlanStepRequest {
+    expected_revision: i32,
     status: PlanStatus,
     waiting_on: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct UpdatePlanRequest {
+    expected_revision: i32,
+    summary: String,
+    steps: Vec<PlanDraftStepRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PlanDraftStepRequest {
+    id: Option<Uuid>,
+    title: String,
+    rationale: String,
+    status: PlanStatus,
+    due_on: Value,
+    waiting_on: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlanConversationRequest {
+    content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanConversationQuery {
+    before: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ApplyPlanProposalRequest {
+    expected_revision: i32,
 }
 
 #[derive(Deserialize)]
@@ -1112,6 +1376,9 @@ impl TryFrom<UpdatePlanStepRequest> for PlanStepUpdate {
     type Error = ();
 
     fn try_from(value: UpdatePlanStepRequest) -> Result<Self, Self::Error> {
+        if value.expected_revision < 1 {
+            return Err(());
+        }
         let waiting_on = match value.waiting_on {
             Value::Null => None,
             Value::String(detail) => Some(detail.trim().to_owned()),
@@ -1122,17 +1389,78 @@ impl TryFrom<UpdatePlanStepRequest> for PlanStepUpdate {
                 if !detail.is_empty() && detail.chars().count() <= MAX_WAITING_ON_CHARACTERS =>
             {
                 Ok(Self {
+                    expected_revision: value.expected_revision,
                     status: PlanStatus::Waiting,
                     waiting_on: Some(detail),
                 })
             }
             (PlanStatus::Waiting, _) => Err(()),
             (status, None) => Ok(Self {
+                expected_revision: value.expected_revision,
                 status,
                 waiting_on: None,
             }),
             (_, Some(_)) => Err(()),
         }
+    }
+}
+
+impl TryFrom<UpdatePlanRequest> for PlanUpdate {
+    type Error = ();
+
+    fn try_from(value: UpdatePlanRequest) -> Result<Self, Self::Error> {
+        if value.expected_revision < 1 || !(1..=MAX_PLAN_STEPS).contains(&value.steps.len()) {
+            return Err(());
+        }
+        let summary = valid_plan_text(value.summary)?;
+        let steps = value
+            .steps
+            .into_iter()
+            .map(|step| {
+                let due_on = parse_nullable_date(step.due_on)?;
+                let waiting_on = parse_nullable_text(step.waiting_on)?;
+                if (matches!(step.status, PlanStatus::Waiting) && waiting_on.is_none())
+                    || (!matches!(step.status, PlanStatus::Waiting) && waiting_on.is_some())
+                {
+                    return Err(());
+                }
+                Ok(PlanDraftStep {
+                    id: step.id,
+                    title: valid_plan_text(step.title)?,
+                    rationale: valid_plan_text(step.rationale)?,
+                    status: step.status,
+                    due_on,
+                    waiting_on,
+                })
+            })
+            .collect::<Result<Vec<_>, ()>>()?;
+        Ok(Self {
+            expected_revision: value.expected_revision,
+            draft: PlanDraft { summary, steps },
+        })
+    }
+}
+
+fn valid_plan_text(value: String) -> Result<String, ()> {
+    let value = value.trim().to_owned();
+    (!value.is_empty() && value.chars().count() <= MAX_WAITING_ON_CHARACTERS)
+        .then_some(value)
+        .ok_or(())
+}
+
+fn parse_nullable_text(value: Value) -> Result<Option<String>, ()> {
+    match value {
+        Value::Null => Ok(None),
+        Value::String(value) => valid_plan_text(value).map(Some),
+        _ => Err(()),
+    }
+}
+
+fn parse_nullable_date(value: Value) -> Result<Option<Date>, ()> {
+    match value {
+        Value::Null => Ok(None),
+        Value::String(value) => parse_date(Some(value)),
+        _ => Err(()),
     }
 }
 
@@ -1302,6 +1630,7 @@ struct PlanDetailResponse {
     inbox_item_id: Uuid,
     summary: String,
     status: PlanStatus,
+    revision: i32,
     steps: Vec<PlanStepResponse>,
     created_at: String,
     updated_at: String,
@@ -1314,9 +1643,110 @@ impl From<&Plan> for PlanDetailResponse {
             inbox_item_id: plan.inbox_item_id,
             summary: plan.summary.clone(),
             status: plan.status,
+            revision: plan.revision,
             steps: plan.steps.iter().map(PlanStepResponse::from).collect(),
             created_at: format_timestamp(plan.created_at),
             updated_at: format_timestamp(plan.updated_at),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanConversationResponse {
+    messages: Vec<PlanMessageResponse>,
+    has_more: bool,
+}
+
+impl From<crate::inbox::PlanMessagesPage> for PlanConversationResponse {
+    fn from(value: crate::inbox::PlanMessagesPage) -> Self {
+        Self {
+            messages: value
+                .messages
+                .iter()
+                .map(PlanMessageResponse::from)
+                .collect(),
+            has_more: value.has_more,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanDiscussionCreateResponse {
+    user_message: PlanMessageResponse,
+    assistant_message: PlanMessageResponse,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanMessageResponse {
+    id: Uuid,
+    role: &'static str,
+    content: String,
+    proposal: Option<PlanDraftResponse>,
+    base_revision: Option<i32>,
+    applied_revision: Option<i32>,
+    created_at: String,
+}
+
+impl From<&PlanMessage> for PlanMessageResponse {
+    fn from(message: &PlanMessage) -> Self {
+        Self {
+            id: message.id,
+            role: match message.role {
+                PlanMessageRole::User => "user",
+                PlanMessageRole::Assistant => "assistant",
+            },
+            content: message.content.clone(),
+            proposal: message.proposal.as_ref().map(PlanDraftResponse::from),
+            base_revision: message.base_revision,
+            applied_revision: message.applied_revision,
+            created_at: format_timestamp(message.created_at),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanDraftResponse {
+    summary: String,
+    steps: Vec<PlanDraftStepResponse>,
+}
+
+impl From<&PlanDraft> for PlanDraftResponse {
+    fn from(value: &PlanDraft) -> Self {
+        Self {
+            summary: value.summary.clone(),
+            steps: value
+                .steps
+                .iter()
+                .map(PlanDraftStepResponse::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanDraftStepResponse {
+    id: Option<Uuid>,
+    title: String,
+    rationale: String,
+    status: PlanStatus,
+    due_on: Option<String>,
+    waiting_on: Option<String>,
+}
+
+impl From<&PlanDraftStep> for PlanDraftStepResponse {
+    fn from(value: &PlanDraftStep) -> Self {
+        Self {
+            id: value.id,
+            title: value.title.clone(),
+            rationale: value.rationale.clone(),
+            status: value.status,
+            due_on: value.due_on.map(format_date),
+            waiting_on: value.waiting_on.clone(),
         }
     }
 }
@@ -1386,9 +1816,11 @@ mod tests {
             highlighted_next_action,
         },
         inbox::{
-            ArchivePlanResult, FileCapture, InboxItem, InboxItemDetail, InboxRepository, NewPlan,
-            NewPlanStep, NewSuggestion, Plan, PlanStep, PlanStepUpdate, Suggestion, SuggestionKind,
-            UpdatePlanStepResult,
+            ApplyPlanProposalResult, ArchivePlanResult, FileCapture, InboxItem, InboxItemDetail,
+            InboxRepository, NewPlan, NewPlanStep, NewSuggestion, Plan, PlanDiscussionReply,
+            PlanDraft, PlanDraftStep, PlanMessage, PlanMessageRole, PlanMessagesPage,
+            PlanRevisionSource, PlanStep, PlanStepUpdate, PlanUpdate, Suggestion, SuggestionKind,
+            UpdatePlanResult, UpdatePlanStepResult,
         },
         notifications::{FcmTokenRegistrationLimitReached, NotificationService},
         storage::PrivateObjectStore,
@@ -1489,6 +1921,7 @@ mod tests {
     struct WorkflowInboxRepository {
         items: Mutex<HashMap<Uuid, (String, InboxItemDetail)>>,
         plans: Mutex<HashMap<Uuid, (String, Plan)>>,
+        messages: Mutex<HashMap<Uuid, Vec<PlanMessage>>>,
     }
 
     impl WorkflowInboxRepository {
@@ -1703,6 +2136,7 @@ mod tests {
                 inbox_item_id: item_id,
                 summary: plan.summary.clone(),
                 status: PlanStatus::Ready,
+                revision: 1,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
                 steps: plan
@@ -1870,10 +2304,13 @@ mod tests {
             if !is_active {
                 return Ok(UpdatePlanStepResult::NotFound);
             }
+            if plan.revision != update.expected_revision {
+                return Ok(UpdatePlanStepResult::Conflict);
+            }
             let Some(step) = plan.steps.iter_mut().find(|step| step.id == step_id) else {
                 return Ok(UpdatePlanStepResult::NotFound);
             };
-            if !step.status.can_transition_to(update.status) {
+            if step.status != update.status && !step.status.can_transition_to(update.status) {
                 return Ok(UpdatePlanStepResult::InvalidState);
             }
             step.status = update.status;
@@ -1895,8 +2332,222 @@ mod tests {
             for step in &mut plan.steps {
                 step.is_next_action = u32::try_from(step.position).ok() == next_position;
             }
+            plan.revision += 1;
             plan.updated_at = OffsetDateTime::now_utc();
             Ok(UpdatePlanStepResult::Updated(plan.clone()))
+        }
+
+        async fn update_plan(
+            &self,
+            owner_uid: &str,
+            plan_id: Uuid,
+            update: &PlanUpdate,
+            _source: PlanRevisionSource,
+        ) -> anyhow::Result<UpdatePlanResult> {
+            let mut plans = self.plans.lock().unwrap();
+            let Some((owner, plan)) = plans.get_mut(&plan_id) else {
+                return Ok(UpdatePlanResult::NotFound);
+            };
+            if owner != owner_uid || plan.revision != update.expected_revision {
+                return Ok(if owner == owner_uid {
+                    UpdatePlanResult::Conflict
+                } else {
+                    UpdatePlanResult::NotFound
+                });
+            }
+            let active = self
+                .items
+                .lock()
+                .unwrap()
+                .get(&plan.inbox_item_id)
+                .is_some_and(|(owner, detail)| {
+                    owner == owner_uid && detail.item.status == InboxStatus::Planned
+                });
+            if !active {
+                return Ok(UpdatePlanResult::NotFound);
+            }
+            let existing = plan.steps.iter().map(|step| step.id).collect::<Vec<_>>();
+            let mut retained = Vec::new();
+            for step in &update.draft.steps {
+                if let Some(id) = step.id {
+                    if !existing.contains(&id) || retained.contains(&id) {
+                        return Ok(UpdatePlanResult::Invalid);
+                    }
+                    retained.push(id);
+                }
+            }
+            for existing_step in &plan.steps {
+                let Some(next_status) = update
+                    .draft
+                    .steps
+                    .iter()
+                    .find(|step| step.id == Some(existing_step.id))
+                    .map(|step| step.status)
+                else {
+                    continue;
+                };
+                if existing_step.status != next_status
+                    && !existing_step.status.can_transition_to(next_status)
+                {
+                    return Ok(UpdatePlanResult::Invalid);
+                }
+            }
+            plan.steps = update
+                .draft
+                .steps
+                .iter()
+                .enumerate()
+                .map(|(position, step)| PlanStep {
+                    id: step.id.unwrap_or_else(Uuid::new_v4),
+                    position: position as i32,
+                    title: step.title.clone(),
+                    rationale: step.rationale.clone(),
+                    status: step.status,
+                    due_on: step.due_on,
+                    waiting_on: step.waiting_on.clone(),
+                    is_next_action: false,
+                    updated_at: OffsetDateTime::now_utc(),
+                })
+                .collect();
+            let states = plan
+                .steps
+                .iter()
+                .map(|step| PlanStepState {
+                    position: step.position as u32,
+                    status: step.status,
+                })
+                .collect::<Vec<_>>();
+            plan.status = derived_plan_status(&states).expect("test Plan has a step");
+            let next_position = highlighted_next_action(&states);
+            for step in &mut plan.steps {
+                step.is_next_action = Some(step.position as u32) == next_position;
+            }
+            plan.summary = update.draft.summary.clone();
+            plan.revision += 1;
+            plan.updated_at = OffsetDateTime::now_utc();
+            Ok(UpdatePlanResult::Updated(plan.clone()))
+        }
+
+        async fn list_plan_messages(
+            &self,
+            owner_uid: &str,
+            plan_id: Uuid,
+            before: Option<OffsetDateTime>,
+            limit: i64,
+        ) -> anyhow::Result<Option<PlanMessagesPage>> {
+            if self.get_plan(owner_uid, plan_id).await?.is_none() {
+                return Ok(None);
+            }
+            let mut messages = self
+                .messages
+                .lock()
+                .unwrap()
+                .get(&plan_id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|message| before.is_none_or(|before| message.created_at < before))
+                .collect::<Vec<_>>();
+            let has_more = messages.len() > limit as usize;
+            if has_more {
+                let start = messages.len() - limit as usize;
+                messages = messages.split_off(start);
+            }
+            Ok(Some(PlanMessagesPage { messages, has_more }))
+        }
+
+        async fn add_plan_discussion(
+            &self,
+            owner_uid: &str,
+            plan_id: Uuid,
+            base_revision: i32,
+            user_content: &str,
+            reply: &PlanDiscussionReply,
+        ) -> anyhow::Result<Option<(PlanMessage, PlanMessage)>> {
+            if self.get_plan(owner_uid, plan_id).await?.is_none() {
+                return Ok(None);
+            }
+            let now = OffsetDateTime::now_utc();
+            let user_message = PlanMessage {
+                id: Uuid::new_v4(),
+                role: PlanMessageRole::User,
+                content: user_content.to_owned(),
+                proposal: None,
+                base_revision: None,
+                applied_revision: None,
+                created_at: now,
+            };
+            let assistant_message = PlanMessage {
+                id: Uuid::new_v4(),
+                role: PlanMessageRole::Assistant,
+                content: reply.content.clone(),
+                proposal: reply.proposal.clone(),
+                base_revision: reply.proposal.as_ref().map(|_| base_revision),
+                applied_revision: None,
+                created_at: now + time::Duration::milliseconds(1),
+            };
+            self.messages
+                .lock()
+                .unwrap()
+                .entry(plan_id)
+                .or_default()
+                .extend([user_message.clone(), assistant_message.clone()]);
+            Ok(Some((user_message, assistant_message)))
+        }
+
+        async fn apply_plan_proposal(
+            &self,
+            owner_uid: &str,
+            plan_id: Uuid,
+            message_id: Uuid,
+            expected_revision: i32,
+        ) -> anyhow::Result<ApplyPlanProposalResult> {
+            let message = self
+                .messages
+                .lock()
+                .unwrap()
+                .get(&plan_id)
+                .and_then(|messages| messages.iter().find(|message| message.id == message_id))
+                .cloned();
+            let Some(message) = message else {
+                return Ok(ApplyPlanProposalResult::NotFound);
+            };
+            let Some(draft) = message.proposal else {
+                return Ok(ApplyPlanProposalResult::Invalid);
+            };
+            if message.base_revision != Some(expected_revision) {
+                return Ok(ApplyPlanProposalResult::Conflict);
+            }
+            let result = self
+                .update_plan(
+                    owner_uid,
+                    plan_id,
+                    &PlanUpdate {
+                        expected_revision,
+                        draft,
+                    },
+                    PlanRevisionSource::Assistant,
+                )
+                .await?;
+            match result {
+                UpdatePlanResult::Updated(plan) => {
+                    if let Some(message) =
+                        self.messages
+                            .lock()
+                            .unwrap()
+                            .get_mut(&plan_id)
+                            .and_then(|messages| {
+                                messages.iter_mut().find(|message| message.id == message_id)
+                            })
+                    {
+                        message.applied_revision = Some(plan.revision);
+                    }
+                    Ok(ApplyPlanProposalResult::Updated(plan))
+                }
+                UpdatePlanResult::NotFound => Ok(ApplyPlanProposalResult::NotFound),
+                UpdatePlanResult::Conflict => Ok(ApplyPlanProposalResult::Conflict),
+                UpdatePlanResult::Invalid => Ok(ApplyPlanProposalResult::Invalid),
+            }
         }
     }
 
@@ -1941,6 +2592,52 @@ mod tests {
     #[derive(Default)]
     struct PlanningProvider {
         received: Mutex<Vec<Suggestion>>,
+    }
+
+    struct DiscussionProvider;
+
+    #[async_trait]
+    impl AiProvider for DiscussionProvider {
+        async fn extract(&self, _input: ExtractionInput) -> AiCall<Extraction> {
+            AiCall {
+                result: Err(AiError::Unavailable),
+                cleanup_file_id: None,
+            }
+        }
+
+        async fn plan(&self, _suggestions: &[Suggestion]) -> Result<NewPlan, AiError> {
+            Err(AiError::Unavailable)
+        }
+
+        async fn discuss_plan(
+            &self,
+            plan: &Plan,
+            _messages: &[PlanMessage],
+            _user_message: &str,
+        ) -> Result<PlanDiscussionReply, AiError> {
+            Ok(PlanDiscussionReply {
+                content: "Here is a revision to review.".to_owned(),
+                proposal: Some(PlanDraft {
+                    summary: "Renew before the trip, with the deadline confirmed.".to_owned(),
+                    steps: plan
+                        .steps
+                        .iter()
+                        .map(|step| PlanDraftStep {
+                            id: Some(step.id),
+                            title: format!("Confirm: {}", step.title),
+                            rationale: step.rationale.clone(),
+                            status: step.status,
+                            due_on: step.due_on,
+                            waiting_on: step.waiting_on.clone(),
+                        })
+                        .collect(),
+                }),
+            })
+        }
+
+        async fn delete_file(&self, _file_id: &str) -> Result<(), AiError> {
+            Err(AiError::Unavailable)
+        }
     }
 
     #[async_trait]
@@ -2533,6 +3230,7 @@ mod tests {
                     inbox_item_id: Uuid::new_v4(),
                     summary: summary.to_owned(),
                     status,
+                    revision: 1,
                     created_at: OffsetDateTime::UNIX_EPOCH,
                     updated_at,
                     steps: vec![plan_step(
@@ -2607,6 +3305,7 @@ mod tests {
                 inbox_item_id,
                 summary: "Renew before travelling.".to_owned(),
                 status: PlanStatus::Waiting,
+                revision: 1,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
                 steps: vec![PlanStep {
@@ -2622,6 +3321,7 @@ mod tests {
                 inbox_item_id: active_inbox_item_id,
                 summary: "An older active Plan.".to_owned(),
                 status: PlanStatus::Ready,
+                revision: 1,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::from_unix_timestamp(1).unwrap(),
                 steps: vec![plan_step(Uuid::new_v4(), 0, PlanStatus::Ready, true)],
@@ -2761,7 +3461,9 @@ mod tests {
                     .method("PATCH")
                     .uri(format!("/api/v1/plans/{plan_id}/steps/{step_id}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .body(Body::from(
+                        r#"{"expectedRevision":1,"status":"complete","waitingOn":null}"#,
+                    ))
                     .unwrap(),
             ))
             .await
@@ -2873,6 +3575,7 @@ mod tests {
                 inbox_item_id: Uuid::new_v4(),
                 summary: "Renew before travelling.".to_owned(),
                 status: PlanStatus::Ready,
+                revision: 1,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
                 steps: vec![
@@ -2890,7 +3593,9 @@ mod tests {
                     .method("PATCH")
                     .uri(format!("/api/v1/plans/{plan_id}/steps/{first_step_id}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .body(Body::from(
+                        r#"{"expectedRevision":1,"status":"complete","waitingOn":null}"#,
+                    ))
                     .unwrap(),
             ))
             .await
@@ -2910,7 +3615,7 @@ mod tests {
                     .uri(format!("/api/v1/plans/{plan_id}/steps/{second_step_id}"))
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"status":"waiting","waitingOn":"  a reply from the agency  "}"#,
+                        r#"{"expectedRevision":2,"status":"waiting","waitingOn":"  a reply from the agency  "}"#,
                     ))
                     .unwrap(),
             ))
@@ -2938,7 +3643,9 @@ mod tests {
                     .method("PATCH")
                     .uri(format!("/api/v1/plans/{plan_id}/steps/{second_step_id}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"status":"ready","waitingOn":null}"#))
+                    .body(Body::from(
+                        r#"{"expectedRevision":3,"status":"ready","waitingOn":null}"#,
+                    ))
                     .unwrap(),
             ))
             .await
@@ -2956,7 +3663,9 @@ mod tests {
                     .method("PATCH")
                     .uri(format!("/api/v1/plans/{plan_id}/steps/{second_step_id}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .body(Body::from(
+                        r#"{"expectedRevision":4,"status":"complete","waitingOn":null}"#,
+                    ))
                     .unwrap(),
             ))
             .await
@@ -2973,12 +3682,15 @@ mod tests {
         );
 
         let reopen = app
+            .clone()
             .oneshot(valid(
                 Request::builder()
                     .method("PATCH")
                     .uri(format!("/api/v1/plans/{plan_id}/steps/{second_step_id}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"status":"ready","waitingOn":null}"#))
+                    .body(Body::from(
+                        r#"{"expectedRevision":5,"status":"ready","waitingOn":null}"#,
+                    ))
                     .unwrap(),
             ))
             .await
@@ -2988,6 +3700,21 @@ mod tests {
             response_json(reopen).await["error"]["code"],
             "INVALID_STATE"
         );
+
+        let editor_reopen = app
+            .oneshot(valid(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/v1/plans/{plan_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"expectedRevision":5,"summary":"Renew before travelling.","steps":[{{"id":"{first_step_id}","title":"First step","rationale":"Why it matters","status":"complete","dueOn":null,"waitingOn":null}},{{"id":"{second_step_id}","title":"Second step","rationale":"Why it matters","status":"ready","dueOn":null,"waitingOn":null}}]}}"#
+                    )))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(editor_reopen.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -3002,6 +3729,7 @@ mod tests {
                 inbox_item_id: Uuid::new_v4(),
                 summary: "Renew before travelling.".to_owned(),
                 status: PlanStatus::Ready,
+                revision: 1,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
                 steps: vec![plan_step(step_id, 0, PlanStatus::Ready, true)],
@@ -3048,7 +3776,9 @@ mod tests {
                     .method("PATCH")
                     .uri(format!("/api/v1/plans/{plan_id}/steps/{step_id}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .body(Body::from(
+                        r#"{"expectedRevision":1,"status":"complete","waitingOn":null}"#,
+                    ))
                     .unwrap(),
             )
             .await
@@ -3062,7 +3792,9 @@ mod tests {
                     .method("PATCH")
                     .uri(format!("/api/v1/plans/{plan_id}/steps/{step_id}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .body(Body::from(
+                        r#"{"expectedRevision":1,"status":"complete","waitingOn":null}"#,
+                    ))
                     .unwrap(),
             ))
             .await
@@ -3076,7 +3808,9 @@ mod tests {
                     .method("PATCH")
                     .uri(format!("/api/v1/plans/{plan_id}/steps/{}", Uuid::new_v4()))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .body(Body::from(
+                        r#"{"expectedRevision":1,"status":"complete","waitingOn":null}"#,
+                    ))
                     .unwrap(),
             ))
             .await
@@ -3089,12 +3823,118 @@ mod tests {
                     .method("PATCH")
                     .uri(format!("/api/v1/plans/{plan_id}/steps/not-a-uuid"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"status":"complete","waitingOn":null}"#))
+                    .body(Body::from(
+                        r#"{"expectedRevision":1,"status":"complete","waitingOn":null}"#,
+                    ))
                     .unwrap(),
             ))
             .await
             .unwrap();
         assert_eq!(malformed_step.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn plan_edits_and_discussion_proposals_are_owner_scoped_and_revision_bound() {
+        let plan_id = Uuid::new_v4();
+        let step_id = Uuid::new_v4();
+        let repository = Arc::new(WorkflowInboxRepository::default());
+        repository.insert_plan(
+            "user-123",
+            Plan {
+                id: plan_id,
+                inbox_item_id: Uuid::new_v4(),
+                summary: "Renew before travelling.".to_owned(),
+                status: PlanStatus::Ready,
+                revision: 1,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+                steps: vec![plan_step(step_id, 0, PlanStatus::Ready, true)],
+            },
+        );
+        let app = workflow_app(repository, Arc::new(DiscussionProvider));
+
+        let conversation = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/plans/{plan_id}/conversation"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"content":"Please revise this Plan."}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(conversation.status(), StatusCode::CREATED);
+        let conversation = response_json(conversation).await;
+        let message_id = conversation["assistantMessage"]["id"]
+            .as_str()
+            .expect("assistant message should have an ID");
+        assert_eq!(conversation["assistantMessage"]["baseRevision"], 1);
+        assert_eq!(
+            conversation["assistantMessage"]["proposal"]["steps"][0]["id"],
+            step_id.to_string()
+        );
+
+        let listed = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .uri(format!("/api/v1/plans/{plan_id}/conversation"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(listed).await["messages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let applied = app
+            .clone()
+            .oneshot(valid(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/api/v1/plans/{plan_id}/conversation/{message_id}/apply"
+                    ))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"expectedRevision":1}"#))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(applied.status(), StatusCode::OK);
+        let applied = response_json(applied).await;
+        assert_eq!(applied["plan"]["revision"], 2);
+        assert_eq!(
+            applied["plan"]["summary"],
+            "Renew before the trip, with the deadline confirmed."
+        );
+
+        let stale_edit = app
+            .oneshot(valid(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/v1/plans/{plan_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"expectedRevision":1,"summary":"Another edit","steps":[{{"id":"{step_id}","title":"Step","rationale":"Why","status":"ready","dueOn":null,"waitingOn":null}}]}}"#
+                    )))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(stale_edit.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(stale_edit).await["error"]["code"],
+            "PLAN_REVISION_CONFLICT"
+        );
     }
 
     #[tokio::test]

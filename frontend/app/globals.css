@@ -2261,6 +2261,183 @@ footer p {
   margin-bottom: 1rem;
 }
 
+.plan-editor,
+.plan-conversation-panel {
+  display: grid;
+  gap: 1rem;
+  padding: clamp(1rem, 3vw, 1.5rem);
+  border: 1px solid #deded3;
+  border-radius: 1.1rem;
+  background: rgb(255 255 252 / 72%);
+}
+
+.plan-editor h2,
+.plan-conversation-panel h2 {
+  margin-top: 0.25rem;
+  color: #23483f;
+  font-size: 1.8rem;
+}
+
+.plan-editor-note,
+.plan-conversation-panel > div > p:last-child {
+  max-width: 42rem;
+  color: #61746f;
+  line-height: 1.5;
+}
+
+.plan-editor-summary,
+.plan-editor-grid label,
+.plan-conversation-form label {
+  display: grid;
+  gap: 0.4rem;
+  color: #23483f;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.plan-editor-summary textarea,
+.plan-editor-grid input,
+.plan-editor-grid textarea,
+.plan-editor-grid select,
+.plan-conversation-form textarea {
+  width: 100%;
+  border: 1px solid #bfcfc4;
+  border-radius: 0.65rem;
+  background: #fffdf8;
+  padding: 0.6rem 0.7rem;
+  color: #253530;
+  font: inherit;
+}
+
+.plan-editor-summary textarea,
+.plan-editor-grid textarea,
+.plan-conversation-form textarea {
+  min-height: 5.5rem;
+  resize: vertical;
+}
+
+.plan-editor-grid label span {
+  color: #61746f;
+  font-weight: 500;
+}
+
+.plan-editor-steps {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-editor-steps > li {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid #e1e1d8;
+  border-radius: 0.8rem;
+}
+
+.plan-editor-step-heading,
+.plan-editor-order-actions,
+.plan-editor-actions,
+.plan-editor-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.plan-editor-step-heading {
+  justify-content: space-between;
+}
+
+.plan-editor-step-heading > p,
+.plan-proposal-heading {
+  color: #23483f;
+  font-weight: 800;
+}
+
+.plan-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 0.4fr);
+  gap: 0.8rem;
+}
+
+.plan-editor-grid label:first-child,
+.plan-editor-grid label:nth-child(3),
+.plan-editor-grid label:last-child {
+  grid-column: 1 / -1;
+}
+
+.plan-editor-actions {
+  justify-content: space-between;
+}
+
+.plan-conversation {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.plan-discuss-button {
+  width: fit-content;
+}
+
+.plan-messages {
+  display: grid;
+  gap: 0.75rem;
+  max-height: 36rem;
+  overflow: auto;
+}
+
+.plan-message {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 50rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid #dce3dc;
+  border-radius: 0.85rem;
+  background: #fffefb;
+}
+
+.plan-message-user {
+  margin-left: 8%;
+  border-color: #e2c5b8;
+  background: #fff3eb;
+}
+
+.plan-message > p:not(.workspace-empty-kicker),
+.plan-proposal > p:not(.plan-proposal-heading) {
+  color: #536964;
+  line-height: 1.5;
+}
+
+.plan-proposal {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.25rem;
+  padding: 0.85rem;
+  border: 1px solid #b9d0c0;
+  border-radius: 0.7rem;
+  background: #f0f7ef;
+}
+
+.plan-proposal ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #426e61;
+}
+
+.plan-conversation-form {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.plan-conversation-form .button {
+  width: fit-content;
+}
+
 .plan-archive-backdrop {
   position: fixed;
   z-index: 30;
@@ -2386,6 +2563,25 @@ footer p {
 
   .plan-heading-actions {
     justify-content: flex-start;
+  }
+
+  .plan-editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-editor-grid label:first-child,
+  .plan-editor-grid label:nth-child(3),
+  .plan-editor-grid label:last-child {
+    grid-column: auto;
+  }
+
+  .plan-editor-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .plan-message-user {
+    margin-left: 0;
   }
 }
 

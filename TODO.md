@@ -211,7 +211,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [ ] User-approved calendar or reminder drafts.
 - [ ] Weekly life-admin review.
 - [ ] Family/caregiver sharing with explicit permissions.
-- [ ] Add an explicit **Revise Plan** flow for planned items.
-  - [ ] Let the user return to the suggestion editor and make changes.
-  - [ ] Require confirmation before replacing or versioning the approved Plan;
-        never silently change its existing steps.
+- [x] Add an explicit **Revise Plan** flow for planned items.
+  - [x] Let the user edit the approved Plan summary and ordered steps directly.
+  - [x] Require revision-checked saves and explicit approval before applying an
+        assistant-proposed Plan revision.

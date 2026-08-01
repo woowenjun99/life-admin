@@ -136,11 +136,11 @@ mod tests {
     }
 
     #[test]
-    fn plan_statuses_allow_waiting_but_not_reopening_complete_work() {
+    fn completed_plan_steps_cannot_reopen() {
         assert!(PlanStatus::Ready.can_transition_to(PlanStatus::Waiting));
-        assert!(PlanStatus::Waiting.can_transition_to(PlanStatus::Ready));
         assert!(PlanStatus::Waiting.can_transition_to(PlanStatus::Complete));
         assert!(!PlanStatus::Complete.can_transition_to(PlanStatus::Ready));
+        assert!(!PlanStatus::Complete.can_transition_to(PlanStatus::Waiting));
     }
 
     #[test]

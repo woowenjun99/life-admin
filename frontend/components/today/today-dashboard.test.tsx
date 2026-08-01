@@ -39,6 +39,7 @@ function plan(
     inboxItemId: `inbox-${id}`,
     summary: `Plan ${id}`,
     status,
+    revision: 1,
     steps,
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt,

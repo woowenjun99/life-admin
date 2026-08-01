@@ -43,10 +43,13 @@ features that are already automated.
 
 Today, the implementation supports private authentication, authenticated text
 and PDF/JPEG/PNG capture, text/PDF extraction into editable suggestions, an
-explicit plan-generation confirmation, and an editable Plan page. A person can
-mark a step **Complete** or **Waiting** (with a required detail); the earliest
-ready step is then shown as the Next action. Image captures remain private and
-saved, but are not AI-extracted.
+explicit plan-generation confirmation, and editable Plans. A person can edit a
+Plan summary and its ordered steps while keeping completed work final; each
+save is revision-checked. Each Plan also has one private discussion where the
+assistant can answer questions or propose a revision, which the person must
+explicitly apply. No conversation or Plan update takes an external action.
+The earliest ready step is shown as the Next action. Image captures remain
+private and saved, but are not AI-extracted.
 
 ## Research and market-discovery starting point
 

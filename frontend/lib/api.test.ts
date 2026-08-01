@@ -2,11 +2,13 @@ import { expect, test } from "bun:test";
 
 import {
   archivePlan,
+  applyPlanProposal,
   authorizationHeaders,
   createTextCapture,
   fetchInboxItem,
   fetchInboxItems,
   fetchPlan,
+  fetchPlanConversation,
   fetchPlans,
   fetchPrivatePdf,
   generatePlan,
@@ -20,6 +22,8 @@ import {
   retryExtraction,
   saveFcmRegistrationToken,
   saveSuggestions,
+  sendPlanMessage,
+  updatePlan,
   updatePlanStep,
   uploadFileCapture,
   validateCaptureFile,
@@ -285,6 +289,7 @@ test("review and Plan API calls require a bearer token and use only safe respons
           inboxItemId: "item-123",
           summary: "Renew before the trip.",
           status: "ready",
+          revision: 1,
           steps: [
             {
               id: "step-123",
@@ -375,6 +380,7 @@ test("updatePlanStep sends the complete status change and preserves API errors",
         inboxItemId: "item-123",
         summary: "Renew before the trip.",
         status: "waiting",
+        revision: 1,
         steps: [
           {
             id: "step-123",
@@ -399,7 +405,7 @@ test("updatePlanStep sends the complete status change and preserves API errors",
       { getIdToken: async () => "firebase-id-token" },
       "plan-123",
       "step-123",
-      { status: "waiting", waitingOn: "A reply from the agency" },
+      { expectedRevision: 1, status: "waiting", waitingOn: "A reply from the agency" },
     );
 
     expect(plan.status).toBe("waiting");
@@ -413,7 +419,7 @@ test("updatePlanStep sends the complete status change and preserves API errors",
       "application/json",
     );
     expect(request?.init?.body).toBe(
-      '{"status":"waiting","waitingOn":"A reply from the agency"}',
+      '{"expectedRevision":1,"status":"waiting","waitingOn":"A reply from the agency"}',
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -435,9 +441,132 @@ test("updatePlanStep sends the complete status change and preserves API errors",
         { getIdToken: async () => "firebase-id-token" },
         "plan-123",
         "step-123",
-        { status: "complete", waitingOn: null },
+        { expectedRevision: 1, status: "complete", waitingOn: null },
       ),
     ).rejects.toMatchObject({ status: 409, code: "INVALID_STATE" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Plan edits and discussions use revision-bound owner-authenticated contracts", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const plan = {
+    id: "plan-123",
+    inboxItemId: "item-123",
+    summary: "Renew before the trip.",
+    status: "ready",
+    revision: 2,
+    steps: [
+      {
+        id: "step-123",
+        position: 0,
+        title: "Check requirements",
+        rationale: "Confirm the deadline.",
+        status: "ready",
+        dueOn: null,
+        waitingOn: null,
+        isNextAction: true,
+        updatedAt: "2026-08-01T00:00:00Z",
+      },
+    ],
+    createdAt: "2026-07-30T00:00:00Z",
+    updatedAt: "2026-08-01T00:00:00Z",
+  };
+  globalThis.fetch = (async (input, init) => {
+    requests.push({ input, init });
+    const path = String(input);
+    if (path.endsWith("/apply") || init?.method === "PUT") {
+      return Response.json({ plan });
+    }
+    if (init?.method === "POST") {
+      return Response.json({
+        userMessage: {
+          id: "message-user",
+          role: "user",
+          content: "Could you revise this?",
+          proposal: null,
+          baseRevision: null,
+          appliedRevision: null,
+          createdAt: "2026-08-01T00:00:00Z",
+        },
+        assistantMessage: {
+          id: "message-assistant",
+          role: "assistant",
+          content: "Here is a revision to review.",
+          proposal: {
+            summary: "Renew before travel.",
+            steps: [
+              {
+                id: "step-123",
+                title: "Confirm requirements",
+                rationale: "Clarifies the deadline.",
+                status: "ready",
+                dueOn: null,
+                waitingOn: null,
+              },
+            ],
+          },
+          baseRevision: 1,
+          appliedRevision: null,
+          createdAt: "2026-08-01T00:00:01Z",
+        },
+      });
+    }
+    return Response.json({
+      messages: [],
+      hasMore: false,
+    });
+  }) as typeof fetch;
+
+  try {
+    const user = { getIdToken: async () => "firebase-id-token" };
+    await updatePlan(user, "plan-123", {
+      expectedRevision: 1,
+      summary: plan.summary,
+      steps: [
+        {
+          id: "step-123",
+          title: "Check requirements",
+          rationale: "Confirm the deadline.",
+          status: "ready",
+        },
+      ],
+    });
+    const conversation = await fetchPlanConversation(user, "plan-123");
+    expect(conversation.hasMore).toBe(false);
+    const reply = await sendPlanMessage(user, "plan-123", "Could you revise this?");
+    expect(reply.assistantMessage.proposal?.steps[0]?.id).toBe("step-123");
+    await applyPlanProposal(user, "plan-123", "message-assistant", 1);
+
+    expect(requests.map(({ input }) => input)).toEqual([
+      "/api/v1/plans/plan-123",
+      "/api/v1/plans/plan-123/conversation",
+      "/api/v1/plans/plan-123/conversation",
+      "/api/v1/plans/plan-123/conversation/message-assistant/apply",
+    ]);
+    expect(requests.map(({ init }) => init?.method)).toEqual(["PUT", undefined, "POST", "POST"]);
+    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+      expectedRevision: 1,
+      summary: "Renew before the trip.",
+      steps: [
+        {
+          id: "step-123",
+          title: "Check requirements",
+          rationale: "Confirm the deadline.",
+          status: "ready",
+          dueOn: null,
+          waitingOn: null,
+        },
+      ],
+    });
+    expect(requests[3]?.init?.body).toBe('{"expectedRevision":1}');
+    for (const request of requests) {
+      expect(new Headers(request.init?.headers).get("Authorization")).toBe(
+        "Bearer firebase-id-token",
+      );
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -484,6 +613,7 @@ test("fetchPlans uses a bearer token and rejects malformed step timestamps", asy
           inboxItemId: "item-123",
           summary: "Renew before the trip.",
           status: "ready",
+          revision: 1,
           steps: [
             {
               id: "step-123",

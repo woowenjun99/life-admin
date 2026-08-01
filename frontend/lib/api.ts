@@ -57,8 +57,39 @@ export type PlanStep = {
 };
 
 export type PlanStepUpdate = {
+  expectedRevision: number;
   status: PlanStep["status"];
   waitingOn: string | null;
+};
+
+export type PlanDraftStep = {
+  id?: string;
+  title: string;
+  rationale: string;
+  status: PlanStep["status"];
+  dueOn?: string;
+  waitingOn?: string;
+};
+
+export type PlanUpdate = {
+  expectedRevision: number;
+  summary: string;
+  steps: PlanDraftStep[];
+};
+
+export type PlanMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  proposal?: { summary: string; steps: PlanDraftStep[] };
+  baseRevision?: number;
+  appliedRevision?: number;
+  createdAt: string;
+};
+
+export type PlanConversation = {
+  messages: PlanMessage[];
+  hasMore: boolean;
 };
 
 export type Plan = {
@@ -66,6 +97,7 @@ export type Plan = {
   inboxItemId: string;
   summary: string;
   status: "ready" | "waiting" | "complete";
+  revision: number;
   steps: PlanStep[];
   createdAt: string;
   updatedAt: string;
@@ -336,6 +368,95 @@ export async function updatePlanStep(
   return parsePlan(await response.json());
 }
 
+export async function updatePlan(
+  user: IdTokenSource,
+  planId: string,
+  update: PlanUpdate,
+): Promise<Plan> {
+  const body = {
+    ...update,
+    steps: update.steps.map((step) => ({
+      ...step,
+      dueOn: step.dueOn ?? null,
+      waitingOn: step.waitingOn ?? null,
+    })),
+  };
+  const response = await fetch(`/api/v1/plans/${planId}`, {
+    method: "PUT",
+    headers: await authorizationHeaders(user, {
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw await responseError(response, "We could not update this Plan.");
+  }
+  return parsePlan(await response.json());
+}
+
+export async function fetchPlanConversation(
+  user: IdTokenSource,
+  planId: string,
+  before?: string,
+): Promise<PlanConversation> {
+  const search = before ? `?before=${encodeURIComponent(before)}` : "";
+  const response = await fetch(`/api/v1/plans/${planId}/conversation${search}`, {
+    cache: "no-store",
+    headers: await authorizationHeaders(user),
+  });
+  if (!response.ok) {
+    throw await responseError(response, "We could not load the Plan conversation.");
+  }
+  return parsePlanConversation(await response.json());
+}
+
+export async function sendPlanMessage(
+  user: IdTokenSource,
+  planId: string,
+  content: string,
+): Promise<{ userMessage: PlanMessage; assistantMessage: PlanMessage }> {
+  const response = await fetch(`/api/v1/plans/${planId}/conversation`, {
+    method: "POST",
+    headers: await authorizationHeaders(user, {
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    throw await responseError(response, "We could not discuss this Plan.");
+  }
+  const payload = await response.json();
+  if (!isRecord(payload) || !isRecord(payload.userMessage) || !isRecord(payload.assistantMessage)) {
+    throw invalid("The Plan conversation response was invalid.");
+  }
+  return {
+    userMessage: parsePlanMessage(payload.userMessage),
+    assistantMessage: parsePlanMessage(payload.assistantMessage),
+  };
+}
+
+export async function applyPlanProposal(
+  user: IdTokenSource,
+  planId: string,
+  messageId: string,
+  expectedRevision: number,
+): Promise<Plan> {
+  const response = await fetch(
+    `/api/v1/plans/${planId}/conversation/${messageId}/apply`,
+    {
+      method: "POST",
+      headers: await authorizationHeaders(user, {
+        "Content-Type": "application/json",
+      }),
+      body: JSON.stringify({ expectedRevision }),
+    },
+  );
+  if (!response.ok) {
+    throw await responseError(response, "We could not apply this Plan proposal.");
+  }
+  return parsePlan(await response.json());
+}
+
 export async function saveFcmRegistrationToken(
   user: IdTokenSource,
   token: string,
@@ -499,6 +620,7 @@ function parsePlanValue(plan: unknown): Plan {
         "inboxItemId",
         "summary",
         "status",
+        "revision",
         "steps",
         "createdAt",
         "updatedAt",
@@ -507,13 +629,16 @@ function parsePlanValue(plan: unknown): Plan {
   ) {
     throw invalid("The Plan response was invalid.");
   }
-  const { id, inboxItemId, summary, status, steps, createdAt, updatedAt } =
+  const { id, inboxItemId, summary, status, revision, steps, createdAt, updatedAt } =
     plan;
   if (
     typeof id !== "string" ||
     typeof inboxItemId !== "string" ||
     typeof summary !== "string" ||
     !isPlanStatus(status) ||
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
     !Array.isArray(steps) ||
     typeof createdAt !== "string" ||
     typeof updatedAt !== "string"
@@ -525,6 +650,7 @@ function parsePlanValue(plan: unknown): Plan {
     inboxItemId,
     summary,
     status,
+    revision,
     steps: steps.map(parsePlanStep),
     createdAt,
     updatedAt,
@@ -656,6 +782,100 @@ function parsePlanStep(value: unknown): PlanStep {
     waitingOn: value.waitingOn ?? undefined,
     isNextAction: value.isNextAction,
     updatedAt: value.updatedAt,
+  };
+}
+
+function parsePlanConversation(payload: unknown): PlanConversation {
+  if (
+    !isRecord(payload) ||
+    !Array.isArray(payload.messages) ||
+    typeof payload.hasMore !== "boolean" ||
+    !Object.keys(payload).every((key) => ["messages", "hasMore"].includes(key))
+  ) {
+    throw invalid("The Plan conversation response was invalid.");
+  }
+  return { messages: payload.messages.map(parsePlanMessage), hasMore: payload.hasMore };
+}
+
+function parsePlanMessage(value: unknown): PlanMessage {
+  if (
+    !isRecord(value) ||
+    !Object.keys(value).every((key) =>
+      [
+        "id",
+        "role",
+        "content",
+        "proposal",
+        "baseRevision",
+        "appliedRevision",
+        "createdAt",
+      ].includes(key),
+    ) ||
+    typeof value.id !== "string" ||
+    (value.role !== "user" && value.role !== "assistant") ||
+    typeof value.content !== "string" ||
+    !(value.proposal === null || value.proposal === undefined || isRecord(value.proposal)) ||
+    !(typeof value.baseRevision === "number" || value.baseRevision === null || value.baseRevision === undefined) ||
+    !(typeof value.appliedRevision === "number" || value.appliedRevision === null || value.appliedRevision === undefined) ||
+    typeof value.createdAt !== "string"
+  ) {
+    throw invalid("The Plan conversation response was invalid.");
+  }
+  const proposal =
+    value.proposal === undefined || value.proposal === null
+      ? undefined
+      : parsePlanDraft(value.proposal);
+  return {
+    id: value.id,
+    role: value.role,
+    content: value.content,
+    ...(proposal === undefined ? {} : { proposal }),
+    ...(typeof value.baseRevision === "number"
+      ? { baseRevision: value.baseRevision }
+      : {}),
+    ...(typeof value.appliedRevision === "number"
+      ? { appliedRevision: value.appliedRevision }
+      : {}),
+    createdAt: value.createdAt,
+  };
+}
+
+function parsePlanDraft(value: Record<string, unknown>): {
+  summary: string;
+  steps: PlanDraftStep[];
+} {
+  if (
+    !Object.keys(value).every((key) => ["summary", "steps"].includes(key)) ||
+    typeof value.summary !== "string" ||
+    !Array.isArray(value.steps)
+  ) {
+    throw invalid("The Plan conversation response was invalid.");
+  }
+  return { summary: value.summary, steps: value.steps.map(parsePlanDraftStep) };
+}
+
+function parsePlanDraftStep(value: unknown): PlanDraftStep {
+  if (
+    !isRecord(value) ||
+    !Object.keys(value).every((key) =>
+      ["id", "title", "rationale", "status", "dueOn", "waitingOn"].includes(key),
+    ) ||
+    !(typeof value.id === "string" || value.id === null || value.id === undefined) ||
+    typeof value.title !== "string" ||
+    typeof value.rationale !== "string" ||
+    !isPlanStatus(value.status) ||
+    !(typeof value.dueOn === "string" || value.dueOn === null || value.dueOn === undefined) ||
+    !(typeof value.waitingOn === "string" || value.waitingOn === null || value.waitingOn === undefined)
+  ) {
+    throw invalid("The Plan conversation response was invalid.");
+  }
+  return {
+    ...(typeof value.id === "string" ? { id: value.id } : {}),
+    title: value.title,
+    rationale: value.rationale,
+    status: value.status,
+    ...(typeof value.dueOn === "string" ? { dueOn: value.dueOn } : {}),
+    ...(typeof value.waitingOn === "string" ? { waitingOn: value.waitingOn } : {}),
   };
 }
 

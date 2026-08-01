@@ -16,8 +16,9 @@ use ai::{AiCall, AiError, AiProvider, Extraction};
 use async_trait::async_trait;
 use domain::PlanStatus;
 use inbox::{
-    ArchivePlanResult, InboxRepository, NewPlan, PlanStepUpdate, SqlxInboxRepository, Suggestion,
-    UpdatePlanStepResult,
+    ApplyPlanProposalResult, ArchivePlanResult, InboxRepository, NewPlan, NewPlanStep,
+    PlanDiscussionReply, PlanDraft, PlanDraftStep, PlanRevisionSource, PlanStepUpdate, PlanUpdate,
+    SqlxInboxRepository, Suggestion, UpdatePlanResult, UpdatePlanStepResult,
 };
 use notifications::{
     FcmRegistrationToken, FcmTokenRegistrationLimitReached, MAX_FCM_REGISTRATION_TOKENS_PER_OWNER,
@@ -161,6 +162,11 @@ async fn due_fcm_notifications_retry_a_pending_claim_after_utc_midnight() {
     assert_eq!(claims.len(), 1);
     assert_eq!(claims[0].plan_step_id, plan_step_id);
 
+    sqlx::query("DELETE FROM plans WHERE id = $1")
+        .bind(plan_id)
+        .execute(&database)
+        .await
+        .expect("test due notification Plan should clean up");
     sqlx::query("DELETE FROM inbox_items WHERE id = $1")
         .bind(inbox_item_id)
         .execute(&database)
@@ -286,6 +292,7 @@ async fn sqlx_repository_updates_owned_plan_steps_and_derives_plan_state() {
             plan_id,
             first_step_id,
             &PlanStepUpdate {
+                expected_revision: 1,
                 status: PlanStatus::Complete,
                 waiting_on: None,
             },
@@ -321,6 +328,7 @@ async fn sqlx_repository_updates_owned_plan_steps_and_derives_plan_state() {
             plan_id,
             second_step_id,
             &PlanStepUpdate {
+                expected_revision: 2,
                 status: PlanStatus::Waiting,
                 waiting_on: Some("A reply from the agency".to_owned()),
             },
@@ -349,6 +357,7 @@ async fn sqlx_repository_updates_owned_plan_steps_and_derives_plan_state() {
             plan_id,
             second_step_id,
             &PlanStepUpdate {
+                expected_revision: 3,
                 status: PlanStatus::Ready,
                 waiting_on: None,
             },
@@ -374,6 +383,7 @@ async fn sqlx_repository_updates_owned_plan_steps_and_derives_plan_state() {
                 plan_id,
                 second_step_id,
                 &PlanStepUpdate {
+                    expected_revision: 4,
                     status: PlanStatus::Ready,
                     waiting_on: None,
                 },
@@ -383,11 +393,160 @@ async fn sqlx_repository_updates_owned_plan_steps_and_derives_plan_state() {
         UpdatePlanStepResult::NotFound
     ));
 
+    sqlx::query("DELETE FROM plans WHERE id = $1")
+        .bind(plan_id)
+        .execute(&database)
+        .await
+        .expect("owned Plan should clean up");
     sqlx::query("DELETE FROM inbox_items WHERE id = $1")
         .bind(inbox_item_id)
         .execute(&database)
         .await
         .expect("owned fixture should clean up");
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL for an isolated PostgreSQL database"]
+async fn sqlx_repository_persists_plan_revisions_and_discussions() {
+    let database = test_database().await;
+    let repository = SqlxInboxRepository::new(database.clone());
+    let owner_uid = format!("editable-plan-owner-{}", Uuid::new_v4());
+    let inbox_item_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO inbox_items (id, owner_uid, source_type, original_text, status) VALUES ($1, $2, 'text', 'Renew the passport.', 'reviewing')",
+    )
+    .bind(inbox_item_id)
+    .bind(&owner_uid)
+    .execute(&database)
+    .await
+    .expect("reviewed Inbox item should insert");
+    let created = repository
+        .create_plan(
+            &owner_uid,
+            inbox_item_id,
+            &NewPlan {
+                summary: "Renew before travelling.".to_owned(),
+                steps: vec![NewPlanStep {
+                    title: "Confirm requirements".to_owned(),
+                    rationale: "Clarifies the renewal deadline.".to_owned(),
+                    status: PlanStatus::Ready,
+                    due_on: None,
+                    waiting_on: None,
+                }],
+            },
+        )
+        .await
+        .expect("Plan creation should succeed")
+        .expect("reviewed item should create a Plan");
+    assert_eq!(created.revision, 1);
+    let retained_step_id = created.steps[0].id;
+
+    let UpdatePlanResult::Updated(edited) = repository
+        .update_plan(
+            &owner_uid,
+            created.id,
+            &PlanUpdate {
+                expected_revision: 1,
+                draft: PlanDraft {
+                    summary: "Renew before travel and confirm the deadline.".to_owned(),
+                    steps: vec![
+                        PlanDraftStep {
+                            id: Some(retained_step_id),
+                            title: "Confirm official requirements".to_owned(),
+                            rationale: "Clarifies the deadline.".to_owned(),
+                            status: PlanStatus::Ready,
+                            due_on: None,
+                            waiting_on: None,
+                        },
+                        PlanDraftStep {
+                            id: None,
+                            title: "Prepare the documents".to_owned(),
+                            rationale: "Makes the application ready.".to_owned(),
+                            status: PlanStatus::Waiting,
+                            due_on: None,
+                            waiting_on: Some("The official requirements".to_owned()),
+                        },
+                    ],
+                },
+            },
+            PlanRevisionSource::Manual,
+        )
+        .await
+        .expect("Plan edit should succeed")
+    else {
+        panic!("current revision should accept the Plan edit");
+    };
+    assert_eq!(edited.revision, 2);
+    assert_eq!(edited.steps[0].id, retained_step_id);
+
+    let proposal = PlanDraft {
+        summary: "Renew before travel.".to_owned(),
+        steps: edited
+            .steps
+            .iter()
+            .map(|step| PlanDraftStep {
+                id: Some(step.id),
+                title: step.title.clone(),
+                rationale: step.rationale.clone(),
+                status: if step.id == retained_step_id {
+                    PlanStatus::Complete
+                } else {
+                    step.status
+                },
+                due_on: step.due_on,
+                waiting_on: step.waiting_on.clone(),
+            })
+            .collect(),
+    };
+    let (_, assistant_message) = repository
+        .add_plan_discussion(
+            &owner_uid,
+            created.id,
+            edited.revision,
+            "Could you make the first step complete?",
+            &PlanDiscussionReply {
+                content: "Here is a revision to review.".to_owned(),
+                proposal: Some(proposal),
+            },
+        )
+        .await
+        .expect("discussion persistence should succeed")
+        .expect("active Plan should retain its discussion");
+    let page = repository
+        .list_plan_messages(&owner_uid, created.id, None, 50)
+        .await
+        .expect("discussion list should succeed")
+        .expect("active Plan should expose its discussion");
+    assert_eq!(page.messages.len(), 2);
+    assert_eq!(page.messages[0].role, inbox::PlanMessageRole::User);
+    assert_eq!(page.messages[1].role, inbox::PlanMessageRole::Assistant);
+
+    let ApplyPlanProposalResult::Updated(applied) = repository
+        .apply_plan_proposal(&owner_uid, created.id, assistant_message.id, 2)
+        .await
+        .expect("proposal application should succeed")
+    else {
+        panic!("fresh proposal should apply exactly once");
+    };
+    assert_eq!(applied.revision, 3);
+    let revision_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM plan_revisions WHERE plan_id = $1")
+            .bind(created.id)
+            .fetch_one(&database)
+            .await
+            .expect("Plan revisions should be queryable");
+    assert_eq!(revision_count, 3);
+
+    sqlx::query("DELETE FROM plans WHERE id = $1")
+        .bind(created.id)
+        .execute(&database)
+        .await
+        .expect("editable Plan should clean up");
+    sqlx::query("DELETE FROM inbox_items WHERE id = $1")
+        .bind(inbox_item_id)
+        .execute(&database)
+        .await
+        .expect("editable Inbox item should clean up");
 }
 
 #[tokio::test]
@@ -454,6 +613,7 @@ async fn sqlx_repository_lists_only_owned_plans_with_ordered_steps() {
     .bind(older_plan_id)
     .bind(newer_second_step_id)
     .bind(newer_plan_id)
+    .bind(Uuid::new_v4())
     .bind(Uuid::new_v4())
     .bind(foreign_plan_id)
     .execute(&database)
@@ -634,6 +794,7 @@ async fn sqlx_repository_archives_only_owned_plan_pairs_and_restores_their_state
                 archived_plan_id,
                 archived_step_id,
                 &PlanStepUpdate {
+                    expected_revision: 1,
                     status: PlanStatus::Complete,
                     waiting_on: None,
                 },

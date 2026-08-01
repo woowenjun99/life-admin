@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { PlanStep } from "@/lib/api";
+import type { Plan, PlanStep } from "@/lib/api";
 
 import { ArchivePlanDialog } from "./archive-plan-dialog";
+import { PlanConversation } from "./plan-conversation";
+import { PlanEditor } from "./plan-editor";
 import { PlanStepControls, planStepStatusLabel } from "./plan-step-controls";
 
 const handlers = {
@@ -25,6 +27,19 @@ function step(status: PlanStep["status"], isNextAction = false): PlanStep {
     dueOn: undefined,
     waitingOn: status === "waiting" ? "A reply from the agency" : undefined,
     isNextAction,
+    updatedAt: "2026-07-31T00:00:00Z",
+  };
+}
+
+function plan(): Plan {
+  return {
+    id: "plan-123",
+    inboxItemId: "item-123",
+    summary: "Renew before travelling.",
+    status: "ready",
+    revision: 1,
+    steps: [step("ready", true)],
+    createdAt: "2026-07-31T00:00:00Z",
     updatedAt: "2026-07-31T00:00:00Z",
   };
 }
@@ -74,6 +89,7 @@ test("Plan step controls represent Waiting and completed steps accurately", () =
   );
   expect(completeMarkup).toContain("Complete");
   expect(completeMarkup).not.toContain("Mark complete");
+  expect(completeMarkup).not.toContain("Reopen");
   expect(planStepStatusLabel(step("ready", true))).toBe("Next action");
   expect(planStepStatusLabel(step("waiting"))).toBe("Waiting");
   expect(planStepStatusLabel(step("complete"))).toBe("Complete");
@@ -95,4 +111,28 @@ test("archiving requires an accessible confirmation with cancel and error states
   expect(markup).toContain("Cancel");
   expect(markup).toContain("Archive Plan");
   expect(markup).toContain("We could not archive this Plan.");
+});
+
+test("Plan editor and discussion retain explicit revision and approval controls", () => {
+  const editor = renderToStaticMarkup(
+    <PlanEditor
+      isSaving={false}
+      onCancel={() => undefined}
+      onSave={() => undefined}
+      plan={plan()}
+    />,
+  );
+  expect(editor).toContain("Move up");
+  expect(editor).toContain("Move down");
+  expect(editor).toContain("Save Plan");
+
+  const discussion = renderToStaticMarkup(
+    <PlanConversation
+      onPlanUpdated={() => undefined}
+      onReloadPlan={() => undefined}
+      plan={plan()}
+      user={{ getIdToken: async () => "token" }}
+    />,
+  );
+  expect(discussion).toContain("Discuss Plan");
 });

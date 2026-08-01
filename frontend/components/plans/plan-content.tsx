@@ -10,10 +10,14 @@ import {
   fetchPlan,
   type Plan,
   type PlanStep,
+  type PlanUpdate,
+  updatePlan,
   updatePlanStep,
 } from "@/lib/api";
 import { restoreFocusAfterDialogClose } from "@/lib/focus-trap";
 import { ArchivePlanDialog } from "./archive-plan-dialog";
+import { PlanConversation } from "./plan-conversation";
+import { PlanEditor } from "./plan-editor";
 import { PlanStepControls } from "./plan-step-controls";
 
 export function PlanContent({ planId }: { planId: string }) {
@@ -25,6 +29,8 @@ export function PlanContent({ planId }: { planId: string }) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isUpdatingPlan, setIsUpdatingPlan] = useState(false);
   const archiveButtonRef = useRef<HTMLButtonElement>(null);
   const [pendingStepId, setPendingStepId] = useState<string | null>(null);
   const [waitingStepId, setWaitingStepId] = useState<string | null>(null);
@@ -54,6 +60,7 @@ export function PlanContent({ planId }: { planId: string }) {
       try {
         setPlan(
           await updatePlanStep(user, planId, step.id, {
+            expectedRevision: plan?.revision ?? 0,
             status,
             waitingOn: waitingOnDetail,
           }),
@@ -66,7 +73,29 @@ export function PlanContent({ planId }: { planId: string }) {
         setPendingStepId(null);
       }
     },
-    [planId, user],
+    [plan?.revision, planId, user],
+  );
+
+  const savePlan = useCallback(
+    async (update: PlanUpdate) => {
+      if (!user) return;
+      setIsUpdatingPlan(true);
+      setActionError(null);
+      try {
+        setPlan(await updatePlan(user, planId, update));
+        setIsEditing(false);
+      } catch (cause) {
+        const message =
+          cause instanceof Error && "code" in cause && cause.code === "PLAN_REVISION_CONFLICT"
+            ? "This Plan changed elsewhere. Reload it before saving your edits."
+            : "We could not update this Plan. Please try again.";
+        setActionError(message);
+        if (message.startsWith("This Plan changed")) void load();
+      } finally {
+        setIsUpdatingPlan(false);
+      }
+    },
+    [load, planId, user],
   );
 
   const startWaiting = (step: PlanStep) => {
@@ -128,7 +157,7 @@ export function PlanContent({ planId }: { planId: string }) {
       </section>
     );
   const nextAction = plan.steps.find((step) => step.isNextAction);
-  const isSaving = pendingStepId !== null;
+  const isSaving = pendingStepId !== null || isUpdatingPlan;
   return (
     <section className="workspace-panel plan-panel">
       <div className="review-heading">
@@ -142,6 +171,15 @@ export function PlanContent({ planId }: { planId: string }) {
           </Link>
           <button
             className="button button-small button-ghost plan-archive-button"
+            disabled={isSaving}
+            onClick={() => setIsEditing(true)}
+            type="button"
+          >
+            Edit Plan
+          </button>
+          <button
+            className="button button-small button-ghost plan-archive-button"
+            disabled={isSaving}
             onClick={() => {
               setArchiveError(null);
               setArchiveOpen(true);
@@ -153,6 +191,21 @@ export function PlanContent({ planId }: { planId: string }) {
           </button>
         </div>
       </div>
+      {actionError ? (
+        <p className="workspace-error plan-action-error" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+      {isEditing ? (
+        <PlanEditor
+          isSaving={isSaving}
+          key={`${plan.id}-${plan.revision}`}
+          onCancel={() => setIsEditing(false)}
+          onSave={(update) => void savePlan(update)}
+          plan={plan}
+        />
+      ) : (
+        <>
       <p className="plan-summary">{plan.summary}</p>
       {nextAction ? (
         <article className="next-action-live">
@@ -175,11 +228,6 @@ export function PlanContent({ planId }: { planId: string }) {
           </p>
         </article>
       )}
-      {actionError ? (
-        <p className="workspace-error plan-action-error" role="alert">
-          {actionError}
-        </p>
-      ) : null}
       <ol className="plan-steps-live">
         {plan.steps.map((step) => (
           <li
@@ -228,6 +276,14 @@ export function PlanContent({ planId }: { planId: string }) {
         This Plan is a guide for you. Updating its steps never sends messages,
         creates events, or takes action outside Life Inbox.
       </p>
+        </>
+      )}
+      <PlanConversation
+        onPlanUpdated={setPlan}
+        onReloadPlan={() => void load()}
+        plan={plan}
+        user={user}
+      />
       {archiveOpen ? (
         <ArchivePlanDialog
           error={archiveError}

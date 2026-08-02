@@ -2342,13 +2342,31 @@ footer p {
 
 .plan-waiting-form {
   display: grid;
-  gap: 0.5rem;
-  padding-top: 0.25rem;
+  gap: 0.6rem;
+  padding: 0.95rem;
+  border: 1px solid #ecd1bd;
+  border-radius: 0.9rem;
+  background: #fff8f3;
+  box-shadow: 0 0.6rem 1.5rem rgb(173 96 70 / 9%);
+}
+
+.plan-waiting-form-title {
+  color: #23483f;
+  font-size: 0.94rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.plan-waiting-form-description {
+  color: #61746f;
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 .plan-waiting-form label {
+  margin-top: 0.2rem;
   color: #23483f;
-  font-size: 0.86rem;
+  font-size: 0.78rem;
   font-weight: 800;
 }
 
@@ -2359,11 +2377,20 @@ footer p {
   background: #fffdf8;
   padding: 0.6rem 0.7rem;
   color: #253530;
+  font-size: 0.84rem;
+}
+
+.plan-waiting-form input::placeholder {
+  color: #82928b;
 }
 
 .plan-waiting-form input:focus-visible {
   outline: 3px solid color-mix(in srgb, #bd624d 42%, transparent);
   outline-offset: 2px;
+}
+
+.plan-waiting-form .plan-step-actions {
+  margin-top: 0.15rem;
 }
 
 .plan-action-error {

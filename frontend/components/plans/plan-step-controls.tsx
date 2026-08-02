@@ -50,7 +50,7 @@ export function PlanStepControls({
               >
                 Make ready
               </button>
-            ) : (
+            ) : !waitingOpen ? (
               <button
                 className="button button-ghost plan-step-button"
                 disabled={isSaving}
@@ -59,7 +59,7 @@ export function PlanStepControls({
               >
                 Mark waiting
               </button>
-            )}
+            ) : null}
             <button
               className="button button-primary plan-step-button"
               disabled={isSaving}
@@ -74,12 +74,26 @@ export function PlanStepControls({
               className="plan-waiting-form"
               onSubmit={(event) => onSubmitWaiting(event, step)}
             >
-              <label htmlFor={`waiting-on-${step.id}`}>Waiting on</label>
+              <p className="plan-waiting-form-title">
+                What’s blocking this step?
+              </p>
+              <p
+                className="plan-waiting-form-description"
+                id={`waiting-on-description-${step.id}`}
+              >
+                Use Waiting only when you need a response, decision, or detail
+                from someone or something else.
+              </p>
+              <label htmlFor={`waiting-on-${step.id}`}>
+                What are you waiting for?
+              </label>
               <input
+                aria-describedby={`waiting-on-description-${step.id}`}
                 disabled={isSaving}
                 id={`waiting-on-${step.id}`}
                 maxLength={2000}
                 onChange={(event) => onWaitingOnChange(event.target.value)}
+                placeholder="e.g. Confirmation from the venue"
                 required
                 value={waitingOn}
               />
@@ -89,7 +103,7 @@ export function PlanStepControls({
                   disabled={isSaving}
                   type="submit"
                 >
-                  Save Waiting
+                  Save as waiting
                 </button>
                 <button
                   className="button button-ghost plan-step-button"

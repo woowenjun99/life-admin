@@ -58,11 +58,15 @@ test("Plan step controls keep the status pill and actions in one aligned aside",
   expect(markup).toContain('class="plan-step-aside"');
   expect(markup).toContain('class="plan-step-status"');
   expect(markup).toContain("Next action");
-  expect(markup).toContain("Mark waiting");
+  expect(markup).not.toContain("Mark waiting");
   expect(markup).toContain("Mark complete");
   expect(markup).toContain('for="waiting-on-step-123"');
   expect(markup).toContain('id="waiting-on-step-123"');
-  expect(markup).toContain("Save Waiting");
+  expect(markup).toContain("What’s blocking this step?");
+  expect(markup).toContain("Use Waiting only when you need a response");
+  expect(markup).toContain("What are you waiting for?");
+  expect(markup).toContain('placeholder="e.g. Confirmation from the venue"');
+  expect(markup).toContain("Save as waiting");
   expect(markup).toContain("required");
 });
 

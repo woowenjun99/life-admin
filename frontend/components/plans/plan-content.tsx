@@ -248,7 +248,7 @@ export function PlanContent({ planId }: { planId: string }) {
                 <p className="plan-step-meta">Due {step.dueOn}</p>
               ) : null}
               {step.waitingOn ? (
-                <p className="plan-step-meta">Waiting on {step.waitingOn}</p>
+                <p className="plan-step-meta">Blocked by: {step.waitingOn}</p>
               ) : null}
             </div>
             <PlanStepControls

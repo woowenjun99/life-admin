@@ -177,7 +177,7 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [ ] Do not log raw personal captures in production logs.
 - [x] Explain when capture data is sent to the AI provider.
 - [x] Provide user-facing archive controls.
-- [ ] Add a short privacy statement for the demo and project submission.
+- [x] Add a short privacy statement for the demo and project submission.
 
 ## Test and demo readiness
 
@@ -189,7 +189,10 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [ ] Run frontend format, lint, type-check, tests, and production build.
 - [ ] Run `git diff --check` before handoff.
 - [ ] Deploy a stable demo environment.
-- [ ] Test the deployed flow in a fresh browser session.
+  - [ ] Verify the deployed capture → review → Plan → complete flow in production.
+- [ ] Test the deployed flow in fresh browser sessions.
+  - [ ] Verify the full flow with a new dedicated demo account.
+  - [ ] Verify sign-in, reload, and sign-out with the returning demo account.
 
 ## Submission checklist
 

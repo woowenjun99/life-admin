@@ -51,6 +51,31 @@ explicitly apply. No conversation or Plan update takes an external action.
 The earliest ready step is shown as the Next action. Image captures remain
 private and saved, but are not AI-extracted.
 
+## Privacy at a glance
+
+Life Inbox is a private, user-controlled workspace rather than an autonomous
+agent. This short statement is intended for the demo and project submission;
+the technical sections below describe the implementation in more detail.
+
+- Access is tied to an authenticated Firebase account, and backend reads and
+  writes are scoped to that account's Firebase UID.
+- Service credentials, provider credentials, Storage object keys, and the
+  backend origin stay server-only. The browser uses only the public Firebase
+  configuration it needs.
+- Supported files are size- and type-checked, stored privately, and read
+  through authenticated backend routes rather than public Storage URLs. This
+  release does not include malware scanning; type validation is not content
+  safety screening.
+- When AI suggestions are enabled, saved text captures are sent to the
+  configured provider to create drafts. PDFs are sent only in Responses mode;
+  JPEG and PNG captures are never sent. Changing `OPENAI_BASE_URL` changes the
+  provider that receives eligible capture data.
+- You can edit or remove suggestions before planning, explicitly apply proposed
+  Plan revisions, and decide when work is complete. Life Inbox does not contact
+  other people, make purchases, create events, or make other external
+  life-admin changes. If you opt in to alerts, it can send generic notifications
+  to your own device when suggestions, Plans, or due steps are ready.
+
 ## Research and market-discovery starting point
 
 The following desk research informs the problem framing. It does **not** yet
@@ -268,6 +293,33 @@ Storage object keys, and credentials are never returned in API responses.
 
 For a PDF, the review screen reads the file through an authenticated,
 owner-scoped backend stream; it does not expose a Firebase Storage URL.
+
+## Production demo verification
+
+Run these checks against the deployed HTTPS site in a new private/incognito
+window. Use a dedicated demo account, a harmless uniquely named text capture,
+and no personal data or credentials in screenshots, notes, or commits. Record
+only the date, deployed origin, browser, and pass/fail result.
+
+### New dedicated demo account
+
+1. Open `/today` before signing in and confirm it redirects to
+   `/?auth=sign-in`.
+2. Create the dedicated demo account and confirm Today opens.
+3. Capture the harmless test note, review its suggestions, explicitly generate
+   and approve a Plan, then complete its Next action.
+4. Archive the demo Plan, sign out, and confirm a new `/today` visit redirects
+   to sign-in again.
+
+### Returning dedicated demo account
+
+1. In a new private/incognito window, open `/today` and confirm the same
+   sign-in redirect.
+2. Sign in to the existing dedicated demo account and confirm Today opens
+   without remaining on “Opening your private workspace…”.
+3. Hard reload Today and confirm the workspace opens again.
+4. Sign out and confirm that `/today` is protected again. Archive any new demo
+   Plan created during this check.
 
 Set `FIREBASE_STORAGE_BUCKET` to the production bucket name. The service
 account must have bucket-level object create and delete permission, while the

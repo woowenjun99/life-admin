@@ -174,6 +174,30 @@ export default async function HomePage({ searchParams }: HomePageProps) {
           </div>
         </section>
 
+        <section aria-labelledby="privacy-heading" className="privacy-section">
+          <div>
+            <p className="eyebrow">Privacy at a glance</p>
+            <h2 id="privacy-heading">A private space, with you in control.</h2>
+          </div>
+          <div className="privacy-copy">
+            <p>
+              Your workspace is tied to your sign-in and is private to your
+              account.
+            </p>
+            <p>
+              When AI suggestions are enabled, saved text—and PDFs when the
+              configured provider supports them—may be sent to that provider to
+              create drafts. Images are never sent.
+            </p>
+            <p>
+              You control Plan creation and every update. Life Inbox never
+              contacts other people, creates calendar events, makes purchases,
+              or makes other external life-admin changes. If you turn on alerts,
+              it can send generic notifications to your own device.
+            </p>
+          </div>
+        </section>
+
         <section className="flow-section" id="how-it-works">
           <div className="section-intro">
             <p className="eyebrow">A gentler way to get organised</p>

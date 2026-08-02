@@ -20,8 +20,11 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
 - [x] Require the user to review and edit suggestions before generating a plan.
 - [x] Generate a concise plan with one next action and two to five ordered steps.
 - [x] Allow users to mark steps complete or waiting.
-- [ ] Never send messages, create calendar events, make purchases, or otherwise
-      act externally without a separate explicit approval flow.
+- [x] Never contact other people, create calendar events, make purchases, or
+      otherwise make external life-admin changes without a separate explicit
+      approval flow.
+  - [x] The current API has no external-action endpoint; opt-in FCM delivery is
+        limited to generic alerts on the owner's device.
 
 ### Not in the hackathon MVP
 
@@ -37,10 +40,15 @@ Use these terms consistently in the interface: **Plan**, **Next action**,
   - [x] Tagline: **Turn life clutter into one clear next action.**
 - [x] Add this product overview to `README.md`.
 - [x] Add server-only AI-provider configuration to `backend/.env.example`.
-- [ ] Add only public browser configuration to `frontend/.env.example`.
-- [ ] Add a small architecture diagram to the README.
-- [ ] Confirm local development still works through `./scripts/start-local.sh`.
-- [ ] Keep lint, type-check, unit tests, and production builds runnable in CI.
+- [x] Add only public browser configuration to `frontend/.env.example`.
+- [x] Add a small architecture diagram to the README.
+- [x] Confirm local development still works through `./scripts/start-local.sh`.
+  - [x] 2026-08-02: PostgreSQL, Auth/Storage emulators, Axum, and Next.js
+        started; backend health/readiness and frontend/proxied readiness passed.
+- [x] Keep lint, type-check, unit tests, and production builds runnable in CI.
+  - [x] GitHub Actions runs the frontend lint, type-check, unit tests, and
+        production build plus backend formatting, Clippy, unit tests, and
+        release build on pull requests and pushes to `master`.
 - [ ] Document how CodeBuddy or WorkBuddy was used while building the project.
 
 ## Next implementation — P0 Private Workspace

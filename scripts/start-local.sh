@@ -189,7 +189,8 @@ main() {
   echo "Starting Next.js frontend..."
   (
     cd "$FRONTEND_DIR"
-    exec env NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_URL="http://127.0.0.1:$FIREBASE_AUTH_PORT" \
+    exec env BACKEND_INTERNAL_URL="http://127.0.0.1:$BACKEND_PORT" \
+      NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_URL="http://127.0.0.1:$FIREBASE_AUTH_PORT" \
       bun run dev -- --port "$FRONTEND_PORT"
   ) &
   local frontend_pid=$!

@@ -51,6 +51,13 @@ explicitly apply. No conversation or Plan update takes an external action.
 The earliest ready step is shown as the Next action. Image captures remain
 private and saved, but are not AI-extracted.
 
+The current API exposes no endpoint for contacting other people, creating
+calendar events, making purchases, or another external life-admin change. The
+AI can return suggestions, Plans, and revision proposals only; a future
+external integration must add its own explicit approval flow. Opt-in FCM alerts
+are generic notifications to the owner's device, not external life-admin
+actions.
+
 ## Privacy at a glance
 
 Life Inbox is a private, user-controlled workspace rather than an autonomous
@@ -107,6 +114,36 @@ This repository contains two independent applications:
 - `backend/` — an Axum API with PostgreSQL via SQLx, Firebase Admin Auth, and Firebase Cloud Messaging.
 - `frontend/` — a Next.js App Router PWA with Firebase Web SDK, T3 Env, and Biome.
 
+### Architecture
+
+```mermaid
+flowchart LR
+    browser[Browser and Life Inbox PWA]
+    frontend[Next.js frontend]
+    backend[Axum backend]
+    auth[Firebase Auth]
+    database[(PostgreSQL)]
+    storage[Firebase Storage]
+    provider[Configured AI provider]
+    messaging[Firebase Cloud Messaging]
+
+    browser -->|Firebase Web SDK| auth
+    browser -->|relative /api requests and session cookie| frontend
+    frontend -->|server-only BACKEND_INTERNAL_URL| backend
+    backend -->|verify ID tokens and session cookies| auth
+    backend -->|owner-scoped Inbox, Plans, and revisions| database
+    backend -->|private file objects| storage
+    backend -->|text and Responses-mode PDFs only| provider
+    backend -->|generic opt-in alerts| messaging
+    messaging -->|owner device notification| browser
+```
+
+The browser never receives `BACKEND_INTERNAL_URL`, service credentials, provider
+credentials, or Storage object keys. Images stay in private Storage and are
+not sent to the AI provider. Plans and discussions produce advice and
+user-approved in-app changes only; optional notifications are generic alerts to
+the owner's device.
+
 ## Prerequisites
 
 - Rust (the project uses the Rust 2024 edition)
@@ -126,8 +163,9 @@ cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env.local
 ```
 
-Fill in the Firebase project and Web App values, then start the full local
-stack with one command:
+Fill in the Firebase project and Web App values. The frontend example contains
+only public browser configuration; the local launcher injects its server-only
+backend target. Then start the full local stack with one command:
 
 ```sh
 ./scripts/start-local.sh

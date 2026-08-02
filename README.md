@@ -223,6 +223,20 @@ For the Firebase Auth Emulator, set
 `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099`; no service-account key is needed
 for emulator access.
 
+## Private web sessions
+
+After Firebase sign-in, the browser exchanges its Firebase ID token through
+the same-origin API proxy for a five-day `life_inbox_session` cookie. The
+cookie is `HttpOnly`, `SameSite=Lax`, host-only, and scoped to `/`; it is also
+`Secure` outside the Firebase Auth Emulator. The Next.js `proxy.ts` verifies
+this cookie through the backend before serving Today, Plan, or review routes.
+The backend remains the authority for API access and continues to verify the
+browser's Firebase bearer token on every private API request.
+
+The session cookie is cleared through `DELETE /api/v1/auth/session` before
+the browser signs out of Firebase. Firebase App Check is not enabled in this
+project yet.
+
 ## Private file capture
 
 `POST /api/v1/inbox-items/files` accepts exactly one multipart field named

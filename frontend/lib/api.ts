@@ -134,6 +134,29 @@ export async function authorizationHeaders(
   return authorizationHeaders;
 }
 
+export async function createSession(user: IdTokenSource): Promise<void> {
+  const response = await fetch("/api/v1/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken: await user.getIdToken() }),
+  });
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      "We could not secure your private session.",
+    );
+  }
+}
+
+export async function clearSession(): Promise<void> {
+  const response = await fetch("/api/v1/auth/session", {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw await responseError(response, "We could not sign you out.");
+  }
+}
+
 export async function fetchCurrentUser(
   user: IdTokenSource,
 ): Promise<CurrentUser> {

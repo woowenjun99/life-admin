@@ -3,13 +3,15 @@
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  signOut,
 } from "firebase/auth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { type AuthMode, authenticationErrorMessage } from "@/lib/auth";
+import { createSession } from "@/lib/api";
 import { firebaseAuth } from "@/lib/firebase/client";
 
 import { useAuth } from "./auth-provider";
@@ -24,13 +26,51 @@ export function AuthForm({ mode, onModeChange }: AuthFormProps) {
   const { isLoading, user } = useAuth();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const sessionEstablished = useRef(false);
+  const sessionRequest = useRef<Promise<void> | null>(null);
   const isSignUp = mode === "sign-up";
 
-  useEffect(() => {
-    if (!isLoading && user) {
-      router.replace("/today");
+  const establishSession = useCallback(async (firebaseUser: typeof user) => {
+    if (!firebaseUser || sessionEstablished.current) return;
+
+    if (!sessionRequest.current) {
+      sessionRequest.current = createSession(firebaseUser)
+        .then(() => {
+          sessionEstablished.current = true;
+        })
+        .finally(() => {
+          sessionRequest.current = null;
+        });
     }
-  }, [isLoading, router, user]);
+
+    await sessionRequest.current;
+  }, []);
+
+  useEffect(() => {
+    if (isLoading || !user) {
+      return;
+    }
+
+    let cancelled = false;
+    void establishSession(user)
+      .then(() => {
+        if (!cancelled) {
+          router.replace("/today");
+        }
+      })
+      .catch(async () => {
+        await signOut(firebaseAuth).catch(() => undefined);
+        if (!cancelled) {
+          setErrorMessage(
+            "We could not secure your private session. Please try again.",
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [establishSession, isLoading, router, user]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,16 +81,26 @@ export function AuthForm({ mode, onModeChange }: AuthFormProps) {
     setErrorMessage(null);
     setIsSubmitting(true);
 
+    let firebaseUser: NonNullable<typeof user>;
     try {
-      if (isSignUp) {
-        await createUserWithEmailAndPassword(firebaseAuth, email, password);
-      } else {
-        await signInWithEmailAndPassword(firebaseAuth, email, password);
-      }
-
-      router.replace("/today");
+      const credential = isSignUp
+        ? await createUserWithEmailAndPassword(firebaseAuth, email, password)
+        : await signInWithEmailAndPassword(firebaseAuth, email, password);
+      firebaseUser = credential.user;
     } catch (error) {
       setErrorMessage(authenticationErrorMessage(error, mode));
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      await establishSession(firebaseUser);
+      router.replace("/today");
+    } catch {
+      await signOut(firebaseAuth).catch(() => undefined);
+      setErrorMessage(
+        "We could not secure your private session. Please try again.",
+      );
     } finally {
       setIsSubmitting(false);
     }

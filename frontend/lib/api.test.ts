@@ -4,6 +4,8 @@ import {
   archivePlan,
   applyPlanProposal,
   authorizationHeaders,
+  clearSession,
+  createSession,
   createTextCapture,
   fetchInboxItem,
   fetchInboxItems,
@@ -39,6 +41,38 @@ test("authorizationHeaders preserves existing headers and attaches a bearer toke
 
   expect(headers.get("Authorization")).toBe("Bearer firebase-id-token");
   expect(headers.get("X-Request-Id")).toBe("request-123");
+});
+
+test("session helpers exchange an ID token and clear the browser session", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{
+    input: RequestInfo | URL;
+    init?: RequestInit;
+  }> = [];
+  globalThis.fetch = (async (input, init) => {
+    requests.push({ input, init });
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+
+  try {
+    await createSession({ getIdToken: async () => "firebase-id-token" });
+    await clearSession();
+
+    expect(requests.map(({ input }) => input)).toEqual([
+      "/api/v1/auth/session",
+      "/api/v1/auth/session",
+    ]);
+    expect(requests.map(({ init }) => init?.method)).toEqual([
+      "POST",
+      "DELETE",
+    ]);
+    expect(new Headers(requests[0]?.init?.headers).get("Content-Type")).toBe(
+      "application/json",
+    );
+    expect(requests[0]?.init?.body).toBe('{"idToken":"firebase-id-token"}');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("parseCurrentUser rejects an invalid identity response", () => {

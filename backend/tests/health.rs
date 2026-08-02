@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use app::{AppState, router};
 use async_trait::async_trait;
-use auth::FirebaseTokenVerifier;
+use auth::{FirebaseSessionCookieService, FirebaseTokenVerifier};
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -56,10 +56,12 @@ async fn health_endpoint_does_not_require_database_connectivity() {
     let database = PgPoolOptions::new()
         .connect_lazy("postgres://app:app@127.0.0.1:5432/app")
         .expect("valid PostgreSQL URL");
-    let firebase_auth = AuthClient::builder("demo-backend")
-        .use_emulator("127.0.0.1:9099")
-        .build()
-        .expect("Firebase emulator client should initialize");
+    let firebase_auth = Arc::new(
+        AuthClient::builder("demo-backend")
+            .use_emulator("127.0.0.1:9099")
+            .build()
+            .expect("Firebase emulator client should initialize"),
+    );
     let app = router(AppState {
         inbox_repository: Arc::new(SqlxInboxRepository::new(database.clone())),
         database,
@@ -67,10 +69,16 @@ async fn health_endpoint_does_not_require_database_connectivity() {
         ai_provider: Arc::new(ai::DisabledAiProvider),
         notifications: Arc::new(notifications::DisabledFcmNotificationService),
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
-            Arc::new(firebase_auth),
+            firebase_auth.clone(),
             "demo-backend",
             true,
         )),
+        session_cookie_service: Arc::new(FirebaseSessionCookieService::new(
+            firebase_auth,
+            "demo-backend",
+            true,
+        )),
+        secure_session_cookie: false,
     });
 
     let response = app

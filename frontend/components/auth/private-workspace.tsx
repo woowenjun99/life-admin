@@ -13,6 +13,7 @@ import {
 import { NotificationSettings } from "@/components/pwa/notification-settings";
 import {
   ApiError,
+  clearSession,
   type CurrentUser,
   fetchCurrentUser,
   removeFcmRegistrationToken,
@@ -21,6 +22,7 @@ import { firebaseAuth } from "@/lib/firebase/client";
 import { unregisterFcmInstallation } from "@/lib/firebase/messaging";
 
 import { useAuth } from "./auth-provider";
+import { clearSessionBeforeFirebaseSignOut } from "./session-lifecycle";
 
 type WorkspaceState =
   | { status: "loading" }
@@ -73,7 +75,21 @@ export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
         }
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
-          await signOut(firebaseAuth).catch(() => undefined);
+          try {
+            await clearSessionBeforeFirebaseSignOut(
+              clearSession,
+              () => signOut(firebaseAuth),
+            );
+          } catch {
+            if (!cancelled) {
+              setWorkspace({
+                status: "error",
+                message:
+                  "We could not end your private session. Please refresh and try again.",
+              });
+            }
+            return;
+          }
           if (!cancelled) {
             router.replace("/?auth=sign-in");
           }
@@ -110,7 +126,10 @@ export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
           () => undefined,
         );
       }
-      await signOut(firebaseAuth);
+      await clearSessionBeforeFirebaseSignOut(
+        clearSession,
+        () => signOut(firebaseAuth),
+      );
       router.replace("/");
     } catch {
       setWorkspace({

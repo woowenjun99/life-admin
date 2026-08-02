@@ -18,7 +18,7 @@ use ai::{
 };
 use anyhow::{Context, Result};
 use app::{AppState, router};
-use auth::FirebaseTokenVerifier;
+use auth::{FirebaseSessionCookieService, FirebaseTokenVerifier};
 use config::Config;
 use inbox::SqlxInboxRepository;
 use notifications::{
@@ -86,10 +86,16 @@ async fn main() -> Result<()> {
         database,
         notifications,
         token_verifier: Arc::new(FirebaseTokenVerifier::new(
+            firebase_auth.clone(),
+            config.firebase_project_id.clone(),
+            auth_emulator_host.is_some(),
+        )),
+        session_cookie_service: Arc::new(FirebaseSessionCookieService::new(
             firebase_auth,
             config.firebase_project_id,
             auth_emulator_host.is_some(),
         )),
+        secure_session_cookie: auth_emulator_host.is_none(),
     });
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await

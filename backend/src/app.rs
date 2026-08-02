@@ -7,7 +7,7 @@ use axum::{
         DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State,
         multipart::MultipartError, rejection::JsonRejection,
     },
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
@@ -26,7 +26,9 @@ use uuid::Uuid;
 
 use crate::{
     ai::{AiError, AiProvider, ExtractionInput, PlanDiscussionStreamEvent, enqueue_cleanup},
-    auth::{AuthenticatedUser, TokenVerifier},
+    auth::{
+        AuthenticatedUser, SessionCookieService, SessionCookieVerificationError, TokenVerifier,
+    },
     domain::{CaptureSourceType, InboxStatus, PlanStatus},
     inbox::{
         ApplyPlanProposalResult, ArchivePlanResult, FileCapture, InboxItem, InboxItemDetail,
@@ -46,12 +48,15 @@ const MAX_WAITING_ON_CHARACTERS: usize = 2_000;
 const MAX_PLAN_STEPS: usize = 20;
 const MAX_PLAN_DISCUSSION_CHARACTERS: usize = 2_000;
 const PLAN_MESSAGES_PAGE_SIZE: i64 = 50;
+const SESSION_COOKIE_NAME: &str = "life_inbox_session";
 
 #[derive(Clone)]
 pub struct AppState {
     pub database: PgPool,
     pub inbox_repository: Arc<dyn InboxRepository>,
     pub token_verifier: Arc<dyn TokenVerifier>,
+    pub session_cookie_service: Arc<dyn SessionCookieService>,
+    pub secure_session_cookie: bool,
     pub object_store: Arc<dyn PrivateObjectStore>,
     pub ai_provider: Arc<dyn AiProvider>,
     pub notifications: Arc<dyn NotificationService>,
@@ -61,6 +66,12 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/ready", get(readiness))
+        .route(
+            "/api/v1/auth/session",
+            get(verify_session)
+                .post(create_session)
+                .delete(clear_session),
+        )
         .route("/api/v1/me", get(current_user))
         .route(
             "/api/v1/inbox-items",
@@ -125,6 +136,52 @@ async fn readiness(State(state): State<AppState>) -> impl IntoResponse {
             )
         }
     }
+}
+
+async fn create_session(
+    State(state): State<AppState>,
+    request: Result<Json<CreateSessionRequest>, JsonRejection>,
+) -> Response {
+    let Ok(Json(request)) = request else {
+        return session_validation_error_response();
+    };
+    if request.id_token.trim().is_empty() {
+        return session_validation_error_response();
+    }
+
+    let Ok(session_cookie) = state.session_cookie_service.create(&request.id_token).await else {
+        return unauthenticated_response();
+    };
+    let Ok(cookie) = session_cookie_header(&session_cookie, state.secure_session_cookie) else {
+        return internal_error_response("Could not create a private session.");
+    };
+
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    response.headers_mut().insert(header::SET_COOKIE, cookie);
+    response
+}
+
+async fn verify_session(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(session_cookie) = cookie_value(&headers, SESSION_COOKIE_NAME) else {
+        return unauthenticated_response();
+    };
+    match state.session_cookie_service.verify(session_cookie).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(SessionCookieVerificationError::Invalid) => unauthenticated_response(),
+        Err(SessionCookieVerificationError::Unavailable) => {
+            session_verification_unavailable_response()
+        }
+    }
+}
+
+async fn clear_session(State(state): State<AppState>) -> Response {
+    let Ok(cookie) = cleared_session_cookie_header(state.secure_session_cookie) else {
+        return internal_error_response("Could not clear the private session.");
+    };
+
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    response.headers_mut().insert(header::SET_COOKIE, cookie);
+    response
 }
 
 async fn current_user(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -1074,11 +1131,55 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     }
 }
 
+fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .map(str::trim)
+        .find_map(|cookie| cookie.strip_prefix(name)?.strip_prefix('='))
+        .filter(|value| !value.is_empty())
+}
+
+fn session_cookie_header(value: &str, secure: bool) -> Result<HeaderValue, ()> {
+    let secure = if secure { "; Secure" } else { "" };
+    HeaderValue::from_str(&format!(
+        "{SESSION_COOKIE_NAME}={value}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax{secure}",
+        5 * 24 * 60 * 60,
+    ))
+    .map_err(|_| ())
+}
+
+fn cleared_session_cookie_header(secure: bool) -> Result<HeaderValue, ()> {
+    let secure = if secure { "; Secure" } else { "" };
+    HeaderValue::from_str(&format!(
+        "{SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax{secure}",
+    ))
+    .map_err(|_| ())
+}
+
 fn unauthenticated_response() -> Response {
     api_error_response(
         StatusCode::UNAUTHORIZED,
         "UNAUTHENTICATED",
         "Authentication required.",
+    )
+}
+
+fn session_verification_unavailable_response() -> Response {
+    api_error_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "SESSION_VERIFICATION_UNAVAILABLE",
+        "Could not verify the private session.",
+    )
+}
+
+fn session_validation_error_response() -> Response {
+    api_error_response(
+        StatusCode::BAD_REQUEST,
+        "VALIDATION_ERROR",
+        "A valid Firebase ID token is required.",
     )
 }
 
@@ -1355,6 +1456,13 @@ fn parse_date(value: Option<String>) -> Result<Option<Date>, ()> {
             Date::parse(&value, format_description!("[year]-[month]-[day]")).map_err(|_| ())
         })
         .transpose()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateSessionRequest {
+    #[serde(rename = "idToken")]
+    id_token: String,
 }
 
 #[derive(Deserialize)]
@@ -1868,13 +1976,18 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use super::{AppState, MAX_FILE_BYTES, can_retry_extraction, router};
+    use super::{
+        AppState, MAX_FILE_BYTES, can_retry_extraction, cleared_session_cookie_header, router,
+        session_cookie_header,
+    };
     use crate::{
         ai::{
             AiApiMode, AiCall, AiError, AiProvider, DisabledAiProvider, Extraction,
             ExtractionInput, OpenAiProvider,
         },
-        auth::{AuthenticatedUser, TokenVerifier},
+        auth::{
+            AuthenticatedUser, SessionCookieService, SessionCookieVerificationError, TokenVerifier,
+        },
         domain::{
             CaptureSourceType, InboxStatus, PlanStatus, PlanStepState, derived_plan_status,
             highlighted_next_action,
@@ -1903,6 +2016,25 @@ mod tests {
                 uid: uid.to_owned(),
                 email: email.to_owned(),
             })
+        }
+    }
+
+    struct TestSessionCookieService;
+    #[async_trait]
+    impl SessionCookieService for TestSessionCookieService {
+        async fn create(&self, id_token: &str) -> Result<String, ()> {
+            match id_token {
+                "valid-token" => Ok("issued-session".to_owned()),
+                _ => Err(()),
+            }
+        }
+
+        async fn verify(&self, session_cookie: &str) -> Result<(), SessionCookieVerificationError> {
+            match session_cookie {
+                "valid-session" => Ok(()),
+                "unavailable-session" => Err(SessionCookieVerificationError::Unavailable),
+                _ => Err(SessionCookieVerificationError::Invalid),
+            }
         }
     }
 
@@ -2875,6 +3007,8 @@ mod tests {
             database,
             inbox_repository: Arc::new(TestInboxRepository::default()),
             token_verifier: Arc::new(TestTokenVerifier),
+            session_cookie_service: Arc::new(TestSessionCookieService),
+            secure_session_cookie: false,
             object_store: Arc::new(TestObjectStore::default()),
             ai_provider,
             notifications,
@@ -2905,6 +3039,8 @@ mod tests {
             database,
             inbox_repository,
             token_verifier: Arc::new(TestTokenVerifier),
+            session_cookie_service: Arc::new(TestSessionCookieService),
+            secure_session_cookie: false,
             object_store: Arc::new(TestObjectStore::default()),
             ai_provider,
             notifications,
@@ -2957,6 +3093,138 @@ mod tests {
             )
             .body(Body::from(body))
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn creates_a_five_day_http_only_session_cookie() {
+        let response = test_app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/session")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"idToken":"valid-token"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            response.headers().get("set-cookie").unwrap(),
+            "life_inbox_session=issued-session; Path=/; Max-Age=432000; HttpOnly; SameSite=Lax"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_malformed_or_invalid_session_creation_requests() {
+        let malformed = test_app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/session")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"token":"valid-token"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+
+        let invalid = test_app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/session")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"idToken":"invalid-token"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn session_validation_accepts_only_a_valid_cookie_and_clears_on_sign_out() {
+        let missing = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+        let invalid = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/session")
+                    .header("cookie", "life_inbox_session=expired-session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+
+        let unavailable = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/session")
+                    .header("cookie", "life_inbox_session=unavailable-session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response_json(unavailable).await["error"]["code"],
+            "SESSION_VERIFICATION_UNAVAILABLE"
+        );
+
+        let valid = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/session")
+                    .header("cookie", "other=value; life_inbox_session=valid-session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(valid.status(), StatusCode::NO_CONTENT);
+
+        let cleared = test_app()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/auth/session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cleared.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            cleared.headers().get("set-cookie").unwrap(),
+            "life_inbox_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+        );
+    }
+
+    #[test]
+    fn secure_session_cookie_headers_keep_the_cookie_host_only_and_secure() {
+        assert_eq!(
+            session_cookie_header("session", true).unwrap(),
+            "life_inbox_session=session; Path=/; Max-Age=432000; HttpOnly; SameSite=Lax; Secure"
+        );
+        assert_eq!(
+            cleared_session_cookie_header(true).unwrap(),
+            "life_inbox_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure"
+        );
     }
 
     #[tokio::test]

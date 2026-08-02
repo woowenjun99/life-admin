@@ -74,6 +74,8 @@ test("Today promotes the newest ready Plan and keeps other Plans reachable", () 
   );
   expect(markup).toContain("Step newer-ready");
   expect(markup).toContain("Other active Plans");
+  expect(markup).toContain("From Plan");
+  expect(markup).toContain("today-focus-grid has-companion");
   expect(markup).toContain('href="/plans/older"');
   expect(markup).toContain("Reply for waiting-step");
 });

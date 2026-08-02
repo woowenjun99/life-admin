@@ -62,6 +62,10 @@ export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
       return undefined;
     }
 
+    if (workspace.status !== "loading") {
+      return undefined;
+    }
+
     const currentFirebaseUser = user;
     let cancelled = false;
 
@@ -111,7 +115,7 @@ export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
     return () => {
       cancelled = true;
     };
-  }, [isLoading, router, user]);
+  }, [isLoading, router, user, workspace.status]);
 
   async function handleSignOut() {
     if (!user) return;
@@ -153,6 +157,21 @@ export function PrivateWorkspace({ children }: PrivateWorkspaceProps) {
       <main className="workspace-page workspace-loading">
         <div className="workspace-error" role="alert">
           <p>{workspace.message}</p>
+          <button
+            className="button button-ghost"
+            onClick={() => setWorkspace({ status: "loading" })}
+            type="button"
+          >
+            Retry
+          </button>
+          <button
+            className="button button-ghost"
+            disabled={isSigningOut}
+            onClick={handleSignOut}
+            type="button"
+          >
+            {isSigningOut ? "Signing out…" : "Sign in again"}
+          </button>
           <Link className="text-link" href="/">
             Back to Life Inbox <span aria-hidden="true">→</span>
           </Link>

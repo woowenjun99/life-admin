@@ -183,48 +183,67 @@ export function TodayDashboard({
   const data = todayDashboardData(state.plans);
   return (
     <section className="today-dashboard" aria-label="Today’s Plans">
-      {data.primaryAction ? (
-        <article className="next-action-live">
-          <p className="workspace-empty-kicker">Next action</p>
-          <h2>{data.primaryAction.nextAction.title}</h2>
-          <p>{data.primaryAction.nextAction.rationale}</p>
-          {data.primaryAction.nextAction.dueOn ? (
-            <p className="today-next-action-meta">
-              Due {data.primaryAction.nextAction.dueOn}
+      <div
+        className={
+          data.otherReadyPlans.length > 0
+            ? "today-focus-grid has-companion"
+            : "today-focus-grid"
+        }
+      >
+        {data.primaryAction ? (
+          <article className="next-action-live">
+            <div className="today-next-action-heading">
+              <p className="workspace-empty-kicker">Next action</p>
+              {data.primaryAction.nextAction.dueOn ? (
+                <p className="today-next-action-meta">
+                  Due {data.primaryAction.nextAction.dueOn}
+                </p>
+              ) : null}
+            </div>
+            <h2>{data.primaryAction.nextAction.title}</h2>
+            <p>{data.primaryAction.nextAction.rationale}</p>
+            <div className="today-next-action-footer">
+              <p>
+                From Plan <strong>{data.primaryAction.plan.summary}</strong>
+              </p>
+              <Link
+                className="text-link"
+                href={`/plans/${data.primaryAction.plan.id}`}
+              >
+                Open Plan <span aria-hidden="true">→</span>
+              </Link>
+            </div>
+          </article>
+        ) : (
+          <article className="next-action-live next-action-unavailable">
+            <p className="workspace-empty-kicker">Next action</p>
+            <h2>No step is ready right now.</h2>
+            <p>
+              Review your Waiting Plans when the response or detail you need
+              arrives.
             </p>
-          ) : null}
-          <Link
-            className="text-link"
-            href={`/plans/${data.primaryAction.plan.id}`}
-          >
-            Open Plan <span aria-hidden="true">→</span>
-          </Link>
-        </article>
-      ) : (
-        <article className="next-action-live next-action-unavailable">
-          <p className="workspace-empty-kicker">Next action</p>
-          <h2>No step is ready right now.</h2>
-          <p>
-            Review your Waiting Plans when the response or detail you need
-            arrives.
-          </p>
-        </article>
-      )}
+          </article>
+        )}
 
-      {data.otherReadyPlans.length > 0 ? (
-        <DashboardSection heading="Other active Plans">
-          <ul className="today-plan-list">
-            {data.otherReadyPlans.map(({ plan, nextAction }) => (
-              <li key={plan.id}>
-                <Link href={`/plans/${plan.id}`}>
-                  <span>{plan.summary}</span>
-                  <strong>{nextAction.title}</strong>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </DashboardSection>
-      ) : null}
+        {data.otherReadyPlans.length > 0 ? (
+          <DashboardSection
+            className="today-active-plans"
+            count={data.otherReadyPlans.length}
+            heading="Other active Plans"
+          >
+            <ul className="today-plan-list">
+              {data.otherReadyPlans.map(({ plan, nextAction }) => (
+                <li key={plan.id}>
+                  <Link href={`/plans/${plan.id}`}>
+                    <span>{plan.summary}</span>
+                    <strong>{nextAction.title}</strong>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </DashboardSection>
+        ) : null}
+      </div>
 
       {data.waitingPlans.length > 0 ? (
         <DashboardSection heading="Waiting">
@@ -266,15 +285,24 @@ export function TodayDashboard({
 }
 
 function DashboardSection({
+  className,
   children,
+  count,
   heading,
 }: {
+  className?: string;
   children: ReactNode;
+  count?: number;
   heading: string;
 }) {
   return (
-    <section className="today-dashboard-section">
-      <h2>{heading}</h2>
+    <section
+      className={`today-dashboard-section${className ? ` ${className}` : ""}`}
+    >
+      <div className="today-dashboard-section-heading">
+        <h2>{heading}</h2>
+        {count ? <span>{count}</span> : null}
+      </div>
       {children}
     </section>
   );

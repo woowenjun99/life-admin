@@ -1054,6 +1054,16 @@ footer p {
   margin-top: 2rem;
 }
 
+.today-focus-grid {
+  display: grid;
+  gap: 1.4rem;
+}
+
+.today-focus-grid.has-companion {
+  grid-template-columns: minmax(0, 1.35fr) minmax(19rem, 0.85fr);
+  align-items: stretch;
+}
+
 .dashboard-notice {
   padding: 1rem 1.1rem;
   border: 1px solid #d9ddd3;
@@ -1080,10 +1090,49 @@ footer p {
 }
 
 .today-next-action-meta {
-  margin-top: 0.8rem;
+  margin: 0;
+  padding: 0.38rem 0.58rem;
+  border: 1px solid rgb(24 60 54 / 18%);
+  border-radius: 999px;
+  background: rgb(255 253 250 / 38%);
   color: #876b4d;
-  font-size: 0.84rem;
+  font-size: 0.72rem;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+.today-next-action-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 1rem;
+}
+
+.today-next-action-footer {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  width: 100%;
+  gap: 1rem;
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(24 60 54 / 16%);
+}
+
+.today-next-action-footer p {
+  margin: 0;
+  color: #5c554c;
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.today-next-action-footer strong {
+  display: block;
+  max-width: 30rem;
+  margin-top: 0.18rem;
+  color: #294b43;
+  font-size: 0.86rem;
 }
 
 .today-dashboard-section {
@@ -1091,10 +1140,37 @@ footer p {
   gap: 0.85rem;
 }
 
+.today-dashboard-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .today-dashboard-section h2 {
   color: #244b43;
   font-size: clamp(1.45rem, 3vw, 1.9rem);
   line-height: 1.05;
+}
+
+.today-dashboard-section-heading > span {
+  display: grid;
+  min-width: 1.7rem;
+  height: 1.7rem;
+  place-items: center;
+  border-radius: 50%;
+  background: #e5eee5;
+  color: #315e53;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.today-active-plans {
+  align-content: start;
+  padding: clamp(1.25rem, 3vw, 1.75rem);
+  border: 1px solid #d9ddd3;
+  border-radius: 1rem;
+  background: rgb(255 253 250 / 68%);
 }
 
 .today-archived-plans {
@@ -1183,18 +1259,35 @@ footer p {
 }
 
 .today-plan-list a {
+  position: relative;
   display: grid;
   gap: 0.35rem;
-  padding: 0.95rem 1.05rem;
+  padding: 0.95rem 2.8rem 0.95rem 1.05rem;
   border: 1px solid #d9ddd3;
   border-radius: 0.75rem;
   background: rgb(255 253 250 / 72%);
   color: #315e53;
   text-decoration: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .today-plan-list a:hover {
   border-color: #9bb7aa;
+  box-shadow: 0 0.45rem 1.15rem rgb(35 70 63 / 9%);
+  transform: translateY(-0.08rem);
+}
+
+.today-plan-list a::after {
+  position: absolute;
+  top: 50%;
+  right: 1rem;
+  color: #58786e;
+  content: "→";
+  font-size: 1.05rem;
+  transform: translateY(-50%);
 }
 
 .today-plan-list span {
@@ -1208,6 +1301,10 @@ footer p {
   line-height: 1.4;
 }
 
+.today-active-plans .today-plan-list {
+  gap: 0.55rem;
+}
+
 .capture-launcher {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(16rem, 0.65fr);
@@ -1217,7 +1314,9 @@ footer p {
   margin-top: 3.5rem;
   padding: clamp(2rem, 5vw, 3.5rem);
   border: 1px solid #d9ddd3;
+  border-top: 0.25rem solid #d6e5d1;
   border-radius: 1rem;
+  box-shadow: 0 0.9rem 2.4rem rgb(35 70 63 / 5%);
   background:
     radial-gradient(
       circle at 100% 0%,
@@ -1367,7 +1466,7 @@ footer p {
 
 .inbox-items-list {
   display: grid;
-  gap: 0.8rem;
+  gap: 0.65rem;
   margin-top: 1.35rem;
   padding: 0;
   list-style: none;
@@ -1378,10 +1477,20 @@ footer p {
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 1rem;
-  padding: 1rem 1.1rem;
+  padding: 0.95rem 1.1rem;
   border: 1px solid #d9ddd3;
+  border-left: 0.25rem solid #dfe9d9;
   border-radius: 0.75rem;
   background: rgb(255 253 250 / 72%);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.inbox-item-card:hover,
+.inbox-item-card:focus-within {
+  border-color: #b8cdbf;
+  box-shadow: 0 0.4rem 1.1rem rgb(35 70 63 / 7%);
 }
 
 .inbox-item-card > div {
@@ -2512,6 +2621,15 @@ footer p {
 }
 
 @media (max-width: 800px) {
+  .today-focus-grid.has-companion {
+    grid-template-columns: 1fr;
+  }
+
+  .today-next-action-footer {
+    align-items: start;
+    flex-direction: column;
+  }
+
   .capture-launcher {
     grid-template-columns: 1fr;
     gap: 2rem;

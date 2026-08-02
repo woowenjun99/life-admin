@@ -9,6 +9,7 @@ import {
   createTextCapture,
   fetchInboxItem,
   fetchInboxItems,
+  fetchCurrentUser,
   fetchPlan,
   fetchPlanConversation,
   fetchPlans,
@@ -41,6 +42,66 @@ test("authorizationHeaders preserves existing headers and attaches a bearer toke
 
   expect(headers.get("Authorization")).toBe("Bearer firebase-id-token");
   expect(headers.get("X-Request-Id")).toBe("request-123");
+});
+
+test("fetchCurrentUser bounds a stalled Firebase token refresh", async () => {
+  await expect(
+    fetchCurrentUser(
+      { getIdToken: () => new Promise<string>(() => undefined) },
+      { timeoutMs: 5 },
+    ),
+  ).rejects.toMatchObject({
+    code: "AUTHENTICATION_TIMEOUT",
+    status: 503,
+  });
+});
+
+test("fetchCurrentUser refreshes a persisted Firebase token and identifies an invalid session", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("fetch should not run for an invalid Firebase session");
+  }) as unknown as typeof fetch;
+  const calls: boolean[] = [];
+
+  try {
+    await expect(
+      fetchCurrentUser(
+        {
+          getIdToken: async (forceRefresh) => {
+            calls.push(Boolean(forceRefresh));
+            throw { code: "auth/user-token-expired" };
+          },
+        },
+        { timeoutMs: 5 },
+      ),
+    ).rejects.toMatchObject({
+      code: "AUTHENTICATION_INVALID",
+      status: 401,
+    });
+    expect(calls).toEqual([true]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchCurrentUser bounds a stalled workspace request", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (() =>
+    new Promise<Response>(() => undefined)) as unknown as typeof fetch;
+
+  try {
+    await expect(
+      fetchCurrentUser(
+        { getIdToken: async () => "fresh-firebase-id-token" },
+        { timeoutMs: 5 },
+      ),
+    ).rejects.toMatchObject({
+      code: "WORKSPACE_TIMEOUT",
+      status: 503,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("session helpers exchange an ID token and clear the browser session", async () => {

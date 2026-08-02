@@ -4,6 +4,10 @@ export type IdTokenSource = {
 
 export type CurrentUser = { uid: string; email: string };
 
+export type FetchCurrentUserOptions = {
+  timeoutMs?: number;
+};
+
 export type InboxItem = {
   id: string;
   planId?: string;
@@ -104,6 +108,7 @@ export type Plan = {
 };
 
 export const MAX_CAPTURE_FILE_BYTES = 10 * 1024 * 1024;
+export const PRIVATE_WORKSPACE_TIMEOUT_MS = 10_000;
 
 const ALLOWED_CAPTURE_FILE_TYPES = new Set([
   "application/pdf",
@@ -159,11 +164,37 @@ export async function clearSession(): Promise<void> {
 
 export async function fetchCurrentUser(
   user: IdTokenSource,
+  { timeoutMs = PRIVATE_WORKSPACE_TIMEOUT_MS }: FetchCurrentUserOptions = {},
 ): Promise<CurrentUser> {
-  const response = await fetch("/api/v1/me", {
-    cache: "no-store",
-    headers: await authorizationHeaders(user),
-  });
+  const idToken = await freshWorkspaceIdToken(user, timeoutMs);
+  const controller = new AbortController();
+  let response: Response;
+
+  try {
+    response = await withTimeout(
+      fetch("/api/v1/me", {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${idToken}` },
+        signal: controller.signal,
+      }),
+      timeoutMs,
+      () =>
+        new ApiError(
+          503,
+          "Checking your private workspace took too long. Please try again.",
+          "WORKSPACE_TIMEOUT",
+        ),
+    );
+  } catch (error) {
+    controller.abort();
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(
+      503,
+      "Could not reach your private workspace. Please try again.",
+      "WORKSPACE_UNAVAILABLE",
+    );
+  }
+
   if (!response.ok) {
     throw await responseError(
       response,
@@ -171,6 +202,72 @@ export async function fetchCurrentUser(
     );
   }
   return parseCurrentUser(await response.json());
+}
+
+async function freshWorkspaceIdToken(
+  user: IdTokenSource,
+  timeoutMs: number,
+): Promise<string> {
+  try {
+    return await withTimeout(
+      user.getIdToken(true),
+      timeoutMs,
+      () =>
+        new ApiError(
+          503,
+          "Checking your Firebase session took too long. Please try again.",
+          "AUTHENTICATION_TIMEOUT",
+        ),
+    );
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+
+    const code = firebaseAuthenticationErrorCode(error);
+    if (
+      code === "auth/invalid-user-token" ||
+      code === "auth/user-token-expired" ||
+      code === "auth/user-disabled" ||
+      code === "auth/user-not-found"
+    ) {
+      throw new ApiError(
+        401,
+        "Your private session has expired. Please sign in again.",
+        "AUTHENTICATION_INVALID",
+      );
+    }
+
+    throw new ApiError(
+      503,
+      "Could not verify your Firebase session. Please try again.",
+      "AUTHENTICATION_UNAVAILABLE",
+    );
+  }
+}
+
+function firebaseAuthenticationErrorCode(error: unknown): string | undefined {
+  return isRecord(error) && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  timeoutError: () => ApiError,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(timeoutError()), timeoutMs);
+    void operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 export async function createTextCapture(
